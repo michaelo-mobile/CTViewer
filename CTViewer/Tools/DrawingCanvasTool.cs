@@ -8,7 +8,7 @@ using System.Windows.Shapes;
 
 namespace CTViewer.Tools
 {
-    public class DrawingCanvasTool : IImageTool
+    public class DrawingCanvasTool 
     {
         public string Name => "Zoom and Pan";
 

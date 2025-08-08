@@ -16,11 +16,11 @@ using System.Windows.Shapes;
 namespace CTViewer.Views
 {
     /// <summary>
-    /// Interaction logic for Histogram.xaml
+    /// Interaction logic for Documentation.xaml
     /// </summary>
-    public partial class Histogram : UserControl
+    public partial class FileButtons : UserControl
     {
-        public Histogram()
+        public FileButtons()
         {
             InitializeComponent();
         }

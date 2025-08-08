@@ -20,7 +20,7 @@ namespace CTViewer.Views
     /// </summary>
     //Add public events or callbacks in AnnotationMenu.xaml.cs:
 
-    public partial class DrawingCanvas : System.Windows.Controls.UserControl
+    public partial class DrawingButtons : System.Windows.Controls.UserControl
     {
         private bool _drawMode = false;
         public event Action<double> StrokeSizeChanged;
@@ -30,7 +30,7 @@ namespace CTViewer.Views
         public event Action HideClicked;
         public event Action<bool> DrawModeToggled;
 
-        public DrawingCanvas()
+        public DrawingButtons()
         {
             InitializeComponent();
             DrawingToggleButton.Click += (s, e) =>
