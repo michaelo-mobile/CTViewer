@@ -1,12 +1,14 @@
 ﻿#nullable disable
 using CTViewer.Tools;
 using CTViewer.Views;
+//using Dicom;
 using FellowOakDicom;
 using FellowOakDicom.Imaging;
 using Microsoft.Win32;
 using System;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Globalization;
 using System.IO;
 using System.Text.Json.Serialization;
 using System.Windows;
@@ -27,7 +29,7 @@ namespace CTViewer.Views
             FileButtons.FileOpened += FileButtons_FileOpened;
 
         }
-        /// <summary>
+        /// <summary> Start of Code for opening Dicom Image with clarity and optimized pixels
         /// Event handler triggered when a file is opened from FileButtons.
         /// Loads and displays a 16-bit grayscale DICOM image with auto window/level adjustment.
         /// </summary>
@@ -38,6 +40,7 @@ namespace CTViewer.Views
                 // Load the DICOM file using fo-dicom
                 var dicomFile = DicomFile.Open(filepath);
                 var pixelData = DicomPixelData.Create(dicomFile.Dataset);
+                var dset = dicomFile.Dataset;
 
                 int width = pixelData.Width;
                 int height = pixelData.Height;
@@ -69,6 +72,7 @@ namespace CTViewer.Views
 
                 // Display the final image
                 MainImage.Source = bitmap;
+                SetPatientInfo(dset);
             }
             catch (Exception ex)
             {
@@ -127,5 +131,140 @@ namespace CTViewer.Views
             return output;
         }
 
+        /// <summary>
+        /// Builds the four lines of overlay text for either the top or bottom patient info box.
+        /// Uses the DICOM dataset to pull relevant tag values.
+        /// </summary>
+        /// <param name="ds">DICOM dataset containing patient and study metadata.</param>
+        /// <param name="top">If true, returns the Patient/ID/Clinic/Physician lines. 
+        /// If false, returns the Date/Time, Modality/Study, Image Index, Body Area/Laterality lines.</param>
+        /// <returns>Tuple of four strings representing overlay lines (L1–L4).</returns>
+        private static (string L1, string L2, string L3, string L4)
+            BuildOverlayLines(DicomDataset ds, bool top)
+        {
+            // Helper to safely get a DICOM tag value as a string, with fallback if empty or missing
+            string Get(DicomTag tag, string fb = "—")
+                => ds?.GetSingleValueOrDefault<string>(tag, fb)?.Trim() ?? fb;
+
+            // Helper to clean a Person Name (PN) field by replacing separators and trimming
+            string CleanPN(string pn) =>
+                string.IsNullOrWhiteSpace(pn) ? "—" : pn.Replace('^', ' ').Replace("  ", " ").Trim();
+
+            // Helper to return the first non-empty, non-placeholder value from a set of options
+            string First(params string[] vals)
+            {
+                foreach (var v in vals)
+                    if (!string.IsNullOrWhiteSpace(v) && v != "—")
+                        return v;
+                return "—";
+            }
+
+            // If this is the TOP overlay (patient info)
+            if (top)
+            {
+                // Patient name (cleaned from PN format)
+                var patient = CleanPN(Get(DicomTag.PatientName));
+                // Patient ID
+                var id = Get(DicomTag.PatientID);
+                // Clinic / Institution
+                var clinic = Get(DicomTag.InstitutionName);
+
+                // Physician with fallback tags (referring → performing → requesting)
+                var physician = CleanPN(Get(DicomTag.ReferringPhysicianName));
+                if (physician == "—") physician = CleanPN(Get(DicomTag.PerformingPhysicianName));
+                if (physician == "—") physician = CleanPN(Get(DicomTag.RequestingPhysician));
+
+                // Return four lines for top overlay
+                return ($"Patient: {patient}",
+                        $"ID: {id}",
+                        $"Clinic: {clinic}",
+                        $"Physician: {physician}");
+            }
+
+            // If this is the BOTTOM overlay (study/image info)
+
+            // Date (prefer StudyDate, fall back to Series/Acquisition/Content dates)
+            var date = First(Get(DicomTag.StudyDate, ""), Get(DicomTag.SeriesDate, ""),
+                             Get(DicomTag.AcquisitionDate, ""), Get(DicomTag.ContentDate, ""));
+            // Time (prefer StudyTime, fall back to Series/Acquisition/Content times)
+            var time = First(Get(DicomTag.StudyTime, ""), Get(DicomTag.SeriesTime, ""),
+                             Get(DicomTag.AcquisitionTime, ""), Get(DicomTag.ContentTime, ""));
+            // Nicely formatted date/time
+            var dateTimeNice = FormatDicomDateTime(date, time);
+
+            // Modality (e.g., CT, MR) and Study/Series/Protocol name
+            var modality = Get(DicomTag.Modality);
+            var studyName = First(Get(DicomTag.StudyDescription, ""),
+                                   Get(DicomTag.SeriesDescription, ""),
+                                   Get(DicomTag.ProtocolName, ""));
+
+            // Image index (InstanceNumber preferred, fallbacks to other sequence positions)
+            var imageIndex = First(Get(DicomTag.InstanceNumber, ""),
+                                   Get(DicomTag.TemporalPositionIndex, ""),
+                                   Get(DicomTag.AcquisitionNumber, ""));
+
+            // Body area and laterality (side)
+            var bodyArea = Get(DicomTag.BodyPartExamined);
+            var laterality = First(Get(DicomTag.ImageLaterality, ""),
+                                   Get(DicomTag.Laterality, ""));
+
+            // Return four lines for bottom overlay
+            return ($"Date/Time: {dateTimeNice}",
+                    $"Modality/Study: {modality} / {studyName}",
+                    $"Image Index: {imageIndex}",
+                    $"Body Area/Laterality: {bodyArea} {laterality}");
+        }
+
+        /// <summary>
+        /// Converts DICOM date/time strings into a human-readable format.
+        /// Handles missing or partial date/time values gracefully.
+        /// </summary>
+        private static string FormatDicomDateTime(string dicomDate, string dicomTime)
+        {
+            DateTime? date = null;
+
+            // Parse DICOM date (YYYYMMDD) if available
+            if (!string.IsNullOrWhiteSpace(dicomDate) && dicomDate.Length >= 8 &&
+                DateTime.TryParseExact(dicomDate[..8], "yyyyMMdd",
+                    CultureInfo.InvariantCulture, DateTimeStyles.None, out var d))
+                date = d;
+
+            TimeSpan? time = null;
+
+            // Parse DICOM time (HHMMSS[.fraction]) if available
+            if (!string.IsNullOrWhiteSpace(dicomTime))
+            {
+                var t = dicomTime.Split('.')[0]; // drop fractional seconds
+                var hh = t.Length >= 2 ? t[..2] : "00";
+                var mm = t.Length >= 4 ? t.Substring(2, 2) : "00";
+                var ss = t.Length >= 6 ? t.Substring(4, 2) : "00";
+                if (int.TryParse(hh, out var H) && int.TryParse(mm, out var M) && int.TryParse(ss, out var S))
+                    time = new TimeSpan(H, M, S);
+            }
+
+            // Format based on what data is present
+            if (date.HasValue && time.HasValue)
+                return date.Value.Add(time.Value).ToString("MMM d, yyyy h:mm tt", CultureInfo.InvariantCulture);
+            if (date.HasValue)
+                return date.Value.ToString("MMM d, yyyy", CultureInfo.InvariantCulture);
+            if (time.HasValue)
+                return DateTime.Today.Add(time.Value).ToString("h:mm tt", CultureInfo.InvariantCulture);
+
+            return "—"; // fallback if nothing is available
+        }
+
+        /// <summary>
+        /// Populates both top and bottom patient info TextBlocks from a DICOM dataset.
+        /// </summary>
+        private void SetPatientInfo(DicomDataset dataset)
+        {
+            // Build top overlay lines and join them into multiline string
+            var top = BuildOverlayLines(dataset, top: true);
+            PatientInfoTop.Text = $"{top.L1}\n{top.L2}\n{top.L3}\n{top.L4}";
+
+            // Build bottom overlay lines and join them into multiline string
+            var bottom = BuildOverlayLines(dataset, top: false);
+            PatientInfoBottom.Text = $"{bottom.L1}\n{bottom.L2}\n{bottom.L3}\n{bottom.L4}";
+        }
     }
 }
