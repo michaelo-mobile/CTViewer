@@ -266,5 +266,14 @@ namespace CTViewer.Views
             var bottom = BuildOverlayLines(dataset, top: false);
             PatientInfoBottom.Text = $"{bottom.L1}\n{bottom.L2}\n{bottom.L3}\n{bottom.L4}";
         }
+
+        // Hide the patient info overlays, 1 button to turn off both, makes it simpler
+        private void HidePatientInfoButton_Click(object sender, RoutedEventArgs e)
+        {
+            // Toggle visibility of both TextBlocks
+            bool isVisible = PatientInfoTop.Visibility == Visibility.Visible;
+            PatientInfoTop.Visibility = isVisible ? Visibility.Collapsed : Visibility.Visible;
+            PatientInfoBottom.Visibility = isVisible ? Visibility.Collapsed : Visibility.Visible;
+        }
     }
 }

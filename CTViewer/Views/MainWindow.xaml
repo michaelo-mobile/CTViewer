@@ -46,7 +46,19 @@
             </Grid.ColumnDefinitions>
 
             <views:FileButtons x:Name="FileButtons" Grid.Column="0"/>
-            <views:DrawingButtons x:Name="DrawingCanvas" Grid.Column="2"/> 
+            
+            <StackPanel Grid.Column="2" Background="#EEE" Margin="5"
+            Orientation="Vertical">
+
+                <!-- Drawing buttons panel -->
+                <views:DrawingButtons x:Name="DrawingCanvas"/>
+
+                <!-- New Hide Patient Info button -->
+                <Button x:Name="HidePatientInfoButton"
+                Content="Hide Patient Info"
+                Margin="5"
+                Click="HidePatientInfoButton_Click"/>
+            </StackPanel>
 
             <!-- Center Panel: Image & Anchors -->
             <Grid Grid.Column="1">
