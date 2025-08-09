@@ -22,11 +22,20 @@ namespace CTViewer.Views
 {
     public partial class MainWindow : Window
     {
-
+        // Fields to hold the image data and metadata
+        private ushort[] _raw16;       // Original 16-bit pixels
+        private int _width, _height;   // Image dimensions
+        private DicomDataset _ds;      // DICOM dataset for metadata
+        private int _wl, _ww;          // Current Window Level / Width
+        
         public MainWindow()
         {
             InitializeComponent();
             FileButtons.FileOpened += FileButtons_FileOpened;
+
+            // Hover readout wiring
+            MainImage.MouseMove += MainImage_MouseMove;
+            MainImage.MouseLeave += (_, __) => XYHU.Text = "X: —   Y: —    HU: —";
 
         }
         /// <summary> Start of Code for opening Dicom Image with clarity and optimized pixels
@@ -55,6 +64,13 @@ namespace CTViewer.Views
                 // Automatically compute optimal window center and width using histogram percentiles (1% to 99%)
                 int wl, ww;
                 ComputeAutoWindowLevel(rawPixels, out wl, out ww);
+                // set the private perameters for future use
+                _ds = dicomFile.Dataset;
+                _raw16 = rawPixels;
+                _width = width;
+                _height = height;
+                _wl = wl;
+                _ww = ww;
 
                 // Apply linear window/level scaling to enhance contrast based on wc/ww
                 ushort[] scaledPixels = ApplyWindowLevelTo16Bit(rawPixels, wl, ww);
@@ -274,6 +290,84 @@ namespace CTViewer.Views
             bool isVisible = PatientInfoTop.Visibility == Visibility.Visible;
             PatientInfoTop.Visibility = isVisible ? Visibility.Collapsed : Visibility.Visible;
             PatientInfoBottom.Visibility = isVisible ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        // ==========================
+        // Event: Updates "X: Y: HU:" display in real-time when mouse moves over the image
+        // ==========================
+        private void MainImage_MouseMove(object sender, MouseEventArgs e)
+        {
+            // Convert the mouse's on-screen position into image pixel coordinates
+            // 'GetPosition(MainImage)' gives mouse coordinates in WPF space (System.Windows.Point)
+            var hit = GetPixelFromMouse(e.GetPosition(MainImage));
+
+            // If we are outside the image bounds, or we have no loaded pixel data, show blanks
+            if (hit is null || _raw16 == null)
+            {
+                XYHU.Text = "X: —   Y: —    HU: —";
+                return;
+            }
+
+            // Pixel coordinates within the image
+            int px = hit.Value.px; // X coordinate in pixels
+            int py = hit.Value.py; // Y coordinate in pixels
+
+            // Convert (x, y) into a single index in our 1D pixel array
+            // Row-major order: index = row * width + column
+            int idx = py * _width + px;
+
+            // Get the raw 16-bit pixel value from our stored DICOM pixel data
+            ushort raw = _raw16[idx];
+
+            // Convert raw pixel value into Hounsfield Units (HU)
+            // Formula: HU = raw * slope + intercept
+            // RescaleSlope and RescaleIntercept come from the DICOM metadata (dataset)
+            // If tags are missing, defaults are slope=1.0 and intercept=0.0
+            double slope = _ds?.GetSingleValueOrDefault(FellowOakDicom.DicomTag.RescaleSlope, 1.0) ?? 1.0;
+            double intercept = _ds?.GetSingleValueOrDefault(FellowOakDicom.DicomTag.RescaleIntercept, 0.0) ?? 0.0;
+            double hu = raw * slope + intercept;
+
+            // Update the overlay TextBlock with formatted coordinates and HU
+            // '0' after the colon in {hu:0} means no decimal places
+            XYHU.Text = $"X: {px}   Y: {py}    HU: {hu:0}";
+        }
+
+
+        // ==========================
+        // Helper: Converts mouse position in the control into pixel coordinates in the image
+        // Handles "Stretch=Uniform" scaling so the mapping is correct
+        // ==========================
+        private (int px, int py)? GetPixelFromMouse(System.Windows.Point pos)
+        {
+            // If no valid image dimensions or no image loaded, exit
+            if (_width <= 0 || _height <= 0 || MainImage.Source == null)
+                return null;
+
+            // Scale factor: how much the image was scaled to fit into the Image control
+            double scale = Math.Min(
+                MainImage.ActualWidth / _width,
+                MainImage.ActualHeight / _height
+            );
+
+            // The actual drawn size of the image (could be smaller than the control if aspect ratio preserved)
+            double drawW = _width * scale;
+            double drawH = _height * scale;
+
+            // Offsets: how far from the top-left corner the drawn image starts
+            // (used for centering when "Stretch=Uniform" is set)
+            double offX = (MainImage.ActualWidth - drawW) / 2.0;
+            double offY = (MainImage.ActualHeight - drawH) / 2.0;
+
+            // Convert mouse coordinates to pixel coordinates inside the image
+            int px = (int)Math.Floor((pos.X - offX) / scale);
+            int py = (int)Math.Floor((pos.Y - offY) / scale);
+
+            // Check bounds — if the mouse is outside the image, return null
+            if (px < 0 || py < 0 || px >= _width || py >= _height)
+                return null;
+
+            // Return pixel coordinates
+            return (px, py);
         }
     }
 }
