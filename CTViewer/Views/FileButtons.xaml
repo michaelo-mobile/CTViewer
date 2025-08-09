@@ -9,7 +9,8 @@
     <Grid>
         <StackPanel Grid.Column="0" Background="#EEE" Margin="5">
             <!-- Add your buttons here -->
-            <Button Content="Open" Margin="5"/>
+            <Button Content="Exit" Margin="5" Click="ExitButton_Click"/>
+            <Button Content="Open" Margin="5" Click="OpenButton_Click"/>
             <Button Content="Save" Margin="5"/>
             <Button Content="Export" Margin="5"/>
         </StackPanel>

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+#nullable disable
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
@@ -23,6 +24,23 @@ namespace CTViewer.Views
         public FileButtons()
         {
             InitializeComponent();
+        }
+        private void OpenButton_Click(object sender, RoutedEventArgs e) 
+        {
+            var dialog = new Microsoft.Win32.OpenFileDialog();
+         dialog.Filter = "DICOM files (*.dcm)|*.dcm|All files (*.*)|*.*";
+        if (dialog.ShowDialog()==true)
+        { 
+           FileOpened?.Invoke(this, dialog.FileName);
+
+            }
+
+        }
+        public event EventHandler<string> FileOpened;
+
+        private void ExitButton_Click(object sender, RoutedEventArgs e)
+        {
+            Application.Current.Shutdown();
         }
     }
 }
