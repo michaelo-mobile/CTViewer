@@ -10,6 +10,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Globalization;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 using System.Windows;
 using System.Windows.Controls;
@@ -27,7 +28,9 @@ namespace CTViewer.Views
         private int _width, _height;   // Image dimensions
         private DicomDataset _ds;      // DICOM dataset for metadata
         private int _wl, _ww;          // Current Window Level / Width
-        
+        private int _defaultwl, _defaultww; // Default WL/WW for reset
+        private bool _suppressSliderEvents; // To prevents double renders when sliders are moved across
+
         public MainWindow()
         {
             InitializeComponent();
@@ -115,7 +118,12 @@ namespace CTViewer.Views
             // Calculate window width and center
             windowWidth = maxVal - minVal;
             windowCenter = (maxVal + minVal) / 2;
+            // set default ww and wc values for future use and initalize them
+            _defaultwl = windowCenter;
+            _defaultww = windowWidth;
+            InitializeWlWwUI(windowCenter, windowWidth);
         }
+
         /// <summary>
         /// Applies linear scaling to 16-bit grayscale pixel data using window center and width.
         /// Maps values to a visible contrast range (0 - 65535).
@@ -369,5 +377,118 @@ namespace CTViewer.Views
             // Return pixel coordinates
             return (px, py);
         }
+
+        private void WWSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_raw16 == null) return; // No image loaded
+            if (_suppressSliderEvents) return; // check if there is preset being applied
+            _ww = (int)e.NewValue;
+            // Re-apply window/level scaling with new width
+            ushort[] scaledPixels = ApplyWindowLevelTo16Bit(_raw16, _wl, _ww);
+            // Update the displayed image
+            var bitmap = BitmapSource.Create(
+                _width,
+                _height,
+                96, 96,
+                PixelFormats.Gray16,
+                null,
+                scaledPixels,
+                _width * 2
+            );
+            MainImage.Source = bitmap;
+            WlWwText.Text = $"WL: {_wl}   WW: {_ww}";
+        }
+
+        private void WLSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_raw16 == null) return; // No image loaded
+            if (_suppressSliderEvents) return; // check if there is preset being applied
+            _wl = (int)e.NewValue;
+            // Re-apply window/level scaling with new level
+            ushort[] scaledPixels = ApplyWindowLevelTo16Bit(_raw16, _wl, _ww);
+            // Update the displayed image
+            var bitmap = BitmapSource.Create(
+                _width,
+                _height,
+                96, 96,
+                PixelFormats.Gray16,
+                null,
+                scaledPixels,
+                _width * 2
+            );
+            MainImage.Source = bitmap;
+            WlWwText.Text = $"WL: {_wl}   WW: {_ww}";
+        }
+
+        private void InitializeWlWwUI(int wl, int ww)
+        {
+            _wl = wl;
+            _ww = Math.Max(1, ww);
+
+            _suppressSliderEvents = true;          // avoid ValueChanged recursion
+            WLSlider.Value = _wl;
+            WWSlider.Value = _ww;
+            _suppressSliderEvents = false;
+
+            RenderWithWlWw(_wl, _ww);              // your render function
+            UpdateWlWwOverlay();                   // e.g., WlWwText.Text = $"WL: {_wl}   WW: {_ww}";
+        }
+        private void RenderWithWlWw(int wl, int ww)
+        {
+            if (_raw16 == null) return;
+            ushort[] scaled = ApplyWindowLevelTo16Bit(_raw16, wl, ww);
+            var bmp = BitmapSource.Create(_width, _height, 96, 96, PixelFormats.Gray16, null, scaled, _width * 2);
+            MainImage.Source = bmp;
+        }
+        private void UpdateWlWwOverlay()
+        {
+            // Only if you have the bottom-left label; otherwise safe to no-op
+            if (WlWwText != null)
+                WlWwText.Text = $"WL: {_wl}   WW: {_ww}";
+        }
+
+        private readonly Dictionary<string, (int wl, int ww)> _presets = new()
+        {
+            ["default"] = (0, 0),        // placeholder; we’ll replace with _defaultWl/_defaultWw at runtime
+            ["bone"] = (300, 1500),
+            ["soft"] = (50, 400),     // abdomen/soft tissue
+            ["lung"] = (-600, 1500),
+            ["brain"] = (40, 80),
+            ["mediastinum"] = (40, 350),
+        };
+
+        private void PresetComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_raw16 == null || !IsLoaded) return;
+
+            var key = (PresetComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+            if (string.IsNullOrWhiteSpace(key)) return;
+
+            int wl, ww;
+            if (key == "default")
+            {
+                wl = _defaultwl;
+                ww = _defaultww;
+            }
+            else if (_presets.TryGetValue(key, out var p))
+            {
+                wl = p.wl;
+                ww = p.ww;
+            }
+            else return;
+
+            // Setting sliders will trigger your existing ValueChanged handlers
+            WLSlider.Value = wl;
+            WWSlider.Value = Math.Max(1, ww);
+        }
+
+        // “Back to Default” button -> just set sliders
+        private void BtnResetAuto_Click(object sender, RoutedEventArgs e)
+        {
+            if (_raw16 == null) return;
+            WLSlider.Value = _defaultwl;
+            WWSlider.Value = Math.Max(1, _defaultww);
+        }
+
     }
 }

@@ -58,6 +58,38 @@
                 Content="Hide Patient Info"
                 Margin="5"
                 Click="HidePatientInfoButton_Click"/>
+                <Button x:Name="RestWW_WL"
+                Content="Reset WW and WL"
+                Margin="5"
+                Click="BtnResetAuto_Click"/>
+                <!--could potentialaly add another reset button exclusively for WW and WL seperately-->
+                <TextBlock Text="WW:" Margin="0,10,0,2"/>
+                <Slider x:Name="WWSlider"
+                Margin="5"
+                Minimum="0" Maximum="4096"
+                Value="1000"
+                TickFrequency="100"
+                IsSnapToTickEnabled="True"
+                ValueChanged="WWSlider_ValueChanged" />
+                <TextBlock Text="WL:" Margin="0,10,0,2"/>
+                <Slider x:Name="WLSlider"
+                Margin="5"
+                Minimum="0" Maximum="4096"
+                Value="1000"
+                TickFrequency="100"
+                IsSnapToTickEnabled="True"
+                ValueChanged="WLSlider_ValueChanged" />
+                <!-- Presets dropdown -->
+                <ComboBox x:Name="PresetComboBox"
+                Margin="5"
+                Width="200"
+                SelectionChanged="PresetComboBox_SelectionChanged">
+                    <ComboBoxItem Content="Default" Tag="default" IsSelected="True" />
+                    <ComboBoxItem Content="Bone" Tag="bone" />
+                    <ComboBoxItem Content="Soft Tissue" Tag="soft" />
+                    <ComboBoxItem Content="Lung" Tag="lung" />
+                    <ComboBoxItem Content="Brain" Tag="brain" />
+                </ComboBox>
             </StackPanel>
 
             <!-- Center Panel: Image + Overlays -->
@@ -112,10 +144,16 @@
                 Panel.ZIndex="1001"
                 IsHitTestVisible="False">
                         <!-- don't block mouse -->
-                        <TextBlock x:Name="XYHU"
-                       Foreground="White"
-                       FontSize="12"
-                       Text="X: —   Y: —    HU: -"/>
+                        <StackPanel Orientation="Vertical">
+                            <TextBlock x:Name="XYHU"
+                   Foreground="White"
+                   FontSize="12"
+                   Text="X: —   Y: —    HU: —"/>
+                            <TextBlock x:Name="WlWwText"
+                   Foreground="White"
+                   FontSize="12"
+                   Text="WL: —   WW: —"/>
+                        </StackPanel>
                     </Border>
 
                 </Grid>
