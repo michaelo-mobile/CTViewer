@@ -17,7 +17,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-
+using System.Windows.Ink;  // for InkCanvas bits
 
 namespace CTViewer.Views
 {
@@ -30,12 +30,24 @@ namespace CTViewer.Views
         private int _wl, _ww;          // Current Window Level / Width
         private int _defaultwl, _defaultww; // Default WL/WW for reset
         private bool _suppressSliderEvents; // To prevents double renders when sliders are moved across
+        private readonly Stack<Stroke> _undo = new();
+        private bool _isDrawMode;
+
 
         public MainWindow()
         {
             InitializeComponent();
             FileButtons.FileOpened += FileButtons_FileOpened;
+            // Hook events from your DrawingButtons control
+            DrawingCanvas.StrokeSizeChanged += OnStrokeSizeChanged;
+            DrawingCanvas.StrokeColorChanged += OnStrokeColorChanged;
+            DrawingCanvas.UndoClicked += OnUndoClicked;
+            DrawingCanvas.ClearClicked += OnClearClicked;
+            DrawingCanvas.HideClicked += OnHideClicked;
+            DrawingCanvas.DrawModeToggled += OnDrawModeToggled;
 
+            // Track strokes for Undo
+            InkCanvas.StrokeCollected += (s, e) => _undo.Push(e.Stroke);
             // Hover readout wiring
             MainImage.MouseMove += MainImage_MouseMove;
             MainImage.MouseLeave += (_, __) => XYHU.Text = "X: —   Y: —    HU: —";
@@ -489,6 +501,47 @@ namespace CTViewer.Views
             WLSlider.Value = _defaultwl;
             WWSlider.Value = Math.Max(1, _defaultww);
         }
+        private void OnStrokeSizeChanged(double size)
+        {
+            var da = InkCanvas.DefaultDrawingAttributes;
+            da.Width = Math.Max(1, size);
+            da.Height = Math.Max(1, size);
+        }
 
+        private void OnStrokeColorChanged(System.Windows.Media.Brush brush)
+        {
+            if (brush is SolidColorBrush scb)
+                InkCanvas.DefaultDrawingAttributes.Color = scb.Color;
+        }
+
+        private void OnUndoClicked()
+        {
+            if (_undo.Count == 0) return;
+            var last = _undo.Pop();
+            if (InkCanvas.Strokes.Contains(last))
+                InkCanvas.Strokes.Remove(last);
+        }
+
+        private void OnClearClicked()
+        {
+            InkCanvas.Strokes.Clear();
+            _undo.Clear();
+        }
+
+        private void OnHideClicked()
+        {
+            InkCanvas.Visibility = InkCanvas.Visibility == Visibility.Visible
+                ? Visibility.Collapsed : Visibility.Visible;
+                
+            InkCanvas.IsHitTestVisible = InkCanvas.Visibility == Visibility.Visible;
+        }
+
+        private void OnDrawModeToggled(bool enabled)
+        {
+            _isDrawMode = enabled;
+            InkCanvas.EditingMode = enabled ? InkCanvasEditingMode.Ink
+                                              : InkCanvasEditingMode.None;
+            InkCanvas.Cursor = enabled ? Cursors.Pen : Cursors.Arrow;
+        }
     }
 }

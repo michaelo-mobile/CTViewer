@@ -99,7 +99,12 @@
            Stretch="Uniform"
            HorizontalAlignment="Center"
            VerticalAlignment="Center"/>
-
+                <InkCanvas x:Name="InkCanvas"
+                Background="Transparent"
+                EditingMode="None" 
+                Visibility="Visible"           
+                Panel.ZIndex="900" />
+                <!--Wait until they hit draw button to enable drawing mode-->
                 <!-- Overlay layer (on top of the image) -->
                 <Grid x:Name="PatientInfoOverlay"
           Panel.ZIndex="1000"
