@@ -151,8 +151,8 @@ namespace CTViewer.Views
         /// Builds the four lines of overlay text for either the top or bottom patient info box.
         /// Uses the DICOM dataset to pull relevant tag values.
         /// </summary>
-        /// <param name="ds">DICOM dataset containing patient and study metadata.</param>
-        /// <param name="top">If true, returns the Patient/ID/Clinic/Physician lines. 
+        /// <param //name="ds">DICOM dataset containing patient and study metadata.</param>
+        /// <param //name="top">If true, returns the Patient/ID/Clinic/Physician lines. 
         /// If false, returns the Date/Time, Modality/Study, Image Index, Body Area/Laterality lines.</param>
         /// <returns>Tuple of four strings representing overlay lines (L1–L4).</returns>
         private static (string L1, string L2, string L3, string L4)
