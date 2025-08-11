@@ -104,6 +104,7 @@ namespace CTViewer.Views
                 // Display the final image
                 MainImage.Source = bitmap;
                 SetPatientInfo(dset);
+                SetDrawMode(false);   // default = tracking on, drawing off
             }
             catch (Exception ex)
             {
@@ -317,6 +318,7 @@ namespace CTViewer.Views
         // ==========================
         private void MainImage_MouseMove(object sender, MouseEventArgs e)
         {
+            if (_isDrawMode) return; // pause while drawing
             // Convert the mouse's on-screen position into image pixel coordinates
             // 'GetPosition(MainImage)' gives mouse coordinates in WPF space (System.Windows.Point)
             var hit = GetPixelFromMouse(e.GetPosition(MainImage));
@@ -352,7 +354,25 @@ namespace CTViewer.Views
             XYHU.Text = $"X: {px}   Y: {py}    HU: {hu:0}";
         }
 
+        private void SetDrawMode(bool on)
+        {
+            _isDrawMode = on;
 
+            if (_isDrawMode)
+            {
+                // Drawing ON: InkCanvas owns input, tracking pauses
+                InkCanvas.IsHitTestVisible = true;
+                InkCanvas.EditingMode = InkCanvasEditingMode.Ink;   // or your selected tool
+                Mouse.OverrideCursor = Cursors.Pen;
+            }
+            else
+            {
+                // Drawing OFF: mouse passes through, tracking resumes
+                InkCanvas.EditingMode = InkCanvasEditingMode.None;
+                InkCanvas.IsHitTestVisible = false;                  // <- key line
+                Mouse.OverrideCursor = Cursors.Arrow;
+            }
+        }
         // ==========================
         // Helper: Converts mouse position in the control into pixel coordinates in the image
         // Handles "Stretch=Uniform" scaling so the mapping is correct
@@ -539,6 +559,7 @@ namespace CTViewer.Views
         private void OnDrawModeToggled(bool enabled)
         {
             _isDrawMode = enabled;
+            SetDrawMode(enabled);
             InkCanvas.EditingMode = enabled ? InkCanvasEditingMode.Ink
                                               : InkCanvasEditingMode.None;
             InkCanvas.Cursor = enabled ? Cursors.Pen : Cursors.Arrow;
