@@ -14,10 +14,11 @@ using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Ink;  // for InkCanvas bits
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using System.Windows.Ink;  // for InkCanvas bits
+using System.Text.RegularExpressions;
 
 namespace CTViewer.Views
 {
@@ -32,7 +33,10 @@ namespace CTViewer.Views
         private bool _suppressSliderEvents; // To prevents double renders when sliders are moved across
         private readonly Stack<Stroke> _undo = new();
         private bool _isDrawMode;
-
+        private DicomFile _currentDicomFile; // Current DICOM file being viewed
+        private string _currentDicomPath; // Path of the currently opened DICOM file
+        
+        private DicomDataset _currentDataset => _currentDicomFile?.Dataset;
 
         public MainWindow()
         {
@@ -102,9 +106,20 @@ namespace CTViewer.Views
                 );
 
                 // Display the final image
+                _currentDicomFile = dicomFile; // Store the current DICOM file for later use
+                _currentDicomPath = filepath; // Store the path of the current DICOM file
                 MainImage.Source = bitmap;
                 SetPatientInfo(dset);
-                SetDrawMode(false);   // default = tracking on, drawing off
+                SetDrawMode(false); // default = tracking, drawing off
+
+                //LoadInkAndWwWlFromDicom(_currentDataset, InkCanvas, out var ww, out var wl, out var state);
+
+                //apply only if present
+                //(CurrentWW, CurrentWL) = (ww ?? CurrentWW, wl ?? CurrentWL);
+
+                //if changing WW/WL needs a redraw, call once here:
+                //    ApplyWindowLevel(CurrentWW, CurrentWL);
+
             }
             catch (Exception ex)
             {
@@ -552,7 +567,7 @@ namespace CTViewer.Views
         {
             InkCanvas.Visibility = InkCanvas.Visibility == Visibility.Visible
                 ? Visibility.Collapsed : Visibility.Visible;
-                
+
             InkCanvas.IsHitTestVisible = InkCanvas.Visibility == Visibility.Visible;
         }
 
@@ -564,5 +579,117 @@ namespace CTViewer.Views
                                               : InkCanvasEditingMode.None;
             InkCanvas.Cursor = enabled ? Cursors.Pen : Cursors.Arrow;
         }
+
+        // start of methods for save functionality
+        public void SaveWorkingDicomWithInk(
+    DicomFile sourceFile, double? ww, double? wl,
+    InkCanvas inkCanvas, string outPath, string optionalAppStateJson = null)
+        {
+            var ds = sourceFile.Dataset.Clone();
+
+            // New IDs so it’s a distinct instance/series (study stays the same)
+            var newSeries = DicomUIDGenerator.GenerateDerivedFromUUID();
+            var newSop = DicomUIDGenerator.GenerateDerivedFromUUID();
+            ds.AddOrUpdate(DicomTag.SeriesInstanceUID, newSeries);
+            ds.AddOrUpdate(DicomTag.SOPInstanceUID, newSop);
+            ds.AddOrUpdate(DicomTag.SeriesDescription, "Working copy (Ink)");
+
+            // Save current display defaults
+            if (ww.HasValue) ds.AddOrUpdate(DicomTag.WindowWidth, ww.Value);
+            if (wl.HasValue) ds.AddOrUpdate(DicomTag.WindowCenter, wl.Value);
+
+            // ---- Private creator + private elements (explicit VRs!) ----
+            var creatorTag = new DicomTag(0x0011, 0x0010); // Private Creator (LO)
+            var strokesTag = new DicomTag(0x0011, 0x1001); // our ISF bytes (OB)
+            var appStateTag = new DicomTag(0x0011, 0x1002); // optional JSON (UT/LT)
+
+            ds.AddOrUpdate(new DicomLongString(creatorTag, "CTViewer")); // register creator FIRST
+
+            using (var ms = new MemoryStream())
+            {
+                inkCanvas.Strokes.Save(ms);                                // ISF vector data
+                ds.AddOrUpdate(new DicomOtherByte(strokesTag, ms.ToArray())); // OB VR → no exception
+            }
+
+            if (!string.IsNullOrWhiteSpace(optionalAppStateJson))
+            {
+                // If your build lacks DicomUnlimitedText, use DicomLongText instead.
+                ds.AddOrUpdate(new DicomUnlimitedText(appStateTag, optionalAppStateJson));
+                // ds.AddOrUpdate(new DicomLongText(appStateTag, optionalAppStateJson));
+            }
+
+            new DicomFile(ds).Save(outPath);
+        }
+        public void LoadInkAndWwWlFromDicom(
+    DicomDataset ds, InkCanvas inkCanvas,
+    out double? ww, out double? wl, out string appStateJson)
+        {
+            ww = wl = null; appStateJson = null;
+
+            if (ds.TryGetSingleValue(DicomTag.WindowWidth, out double wwVal)) ww = wwVal;
+            if (ds.TryGetSingleValue(DicomTag.WindowCenter, out double wlVal)) wl = wlVal;
+
+            // Private creator + our private tags
+            var PrivateCreatorTag = new DicomTag(0x0011, 0x0010);
+            var InkIsfTag = new DicomTag(0x0011, 0x1001); // ISF bytes
+            var AppStateJsonTag = new DicomTag(0x0011, 0x1002); // optional JSON
+
+            ds.AddOrUpdate(PrivateCreatorTag, "CTViewer"); // must come first
+
+            using (var ms = new MemoryStream())
+            {
+                inkCanvas.Strokes.Save(ms);                     // ISF vector data
+                ds.AddOrUpdate(new DicomOtherByte(InkIsfTag, ms.ToArray()));   // <-- OB VR
+            }
+
+            //if (!string.IsNullOrWhiteSpace(optionalAppStateJson))
+            //{
+            //    ds.AddOrUpdate(new DicomUnlimitedText(AppStateJsonTag, optionalAppStateJson)); // <-- UT VR
+            //}
+        }
+        private string MakeNextVersionName(string currentPath)
+        {
+            var dir = Path.GetDirectoryName(currentPath)!;
+            var name = Path.GetFileNameWithoutExtension(currentPath);
+            var ext = Path.GetExtension(currentPath);
+
+            var m = Regex.Match(name, @"^(.*)_v(\d+)$");
+            if (m.Success) return Path.Combine(dir, $"{m.Groups[1].Value}_v{int.Parse(m.Groups[2].Value) + 1}{ext}");
+            return Path.Combine(dir, $"{name}_v1{ext}");
+        }
+        private void SaveAsClickedEvent(object sender, RoutedEventArgs e)
+        {
+            if (_currentDicomFile == null)
+            {
+                MessageBox.Show("Open a DICOM first.");
+                return;
+            }
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Filter = "DICOM file (*.dcm)|*.dcm",
+                FileName = MakeNextVersionName(_currentDicomPath)
+            };
+            if (dlg.ShowDialog() == true)
+            {
+                SaveWorkingDicomWithInk(
+                    _currentDicomFile,    // the original you opened
+                    getCurrentCurrentWW(), getCurrentCurrentWL(), // from your sliders
+                    InkCanvas,            // current strokes
+                    dlg.FileName,
+                    optionalAppStateJson: null // optional: tool, zoom, etc.
+                );
+            }
+        }
+        private double getCurrentCurrentWL()
+        {
+            // Get the current values from the sliders
+            return (double)WLSlider.Value;
+        }
+        private double getCurrentCurrentWW()
+        {
+            // Get the current values from the sliders
+            return (double)WWSlider.Value; ;
+        }
+
     }
 }

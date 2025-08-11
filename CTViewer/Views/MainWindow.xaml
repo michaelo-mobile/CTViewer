@@ -45,7 +45,7 @@
                 <!-- Image Modifications -->
             </Grid.ColumnDefinitions>
 
-            <views:FileButtons x:Name="FileButtons" Grid.Column="0"/>
+            <views:FileButtons x:Name="FileButtons" SaveAsClicked ="SaveAsClickedEvent" Grid.Column="0"/>
             
             <StackPanel Grid.Column="2" Background="#EEE" Margin="5"
             Orientation="Vertical">

@@ -11,7 +11,7 @@
             <!-- Add your buttons here -->
             <Button Content="Exit" Margin="5" Click="ExitButton_Click"/>
             <Button Content="Open" Margin="5" Click="OpenButton_Click"/>
-            <Button Content="Save" Margin="5"/>
+            <Button Content="Save As" Margin="5" Click="SaveAs_Click" x:Name="SaveAsButton"/>
             <Button Content="Export" Margin="5"/>
         </StackPanel>
     </Grid>

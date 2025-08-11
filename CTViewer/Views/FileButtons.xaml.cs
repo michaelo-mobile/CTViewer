@@ -42,5 +42,20 @@ namespace CTViewer.Views
         {
             Application.Current.Shutdown();
         }
+        public static readonly RoutedEvent SaveAsClickedEvent =
+        EventManager.RegisterRoutedEvent(
+            "SaveAsClicked", RoutingStrategy.Bubble,
+            typeof(RoutedEventHandler), typeof(FileButtons));
+
+        public event RoutedEventHandler SaveAsClicked
+        {
+            add { AddHandler(SaveAsClickedEvent, value); }
+            remove { RemoveHandler(SaveAsClickedEvent, value); }
+        }
+
+        // wire this to your Save As button in FileButtons.xaml: Click="SaveAsBtn_Click"
+        private void SaveAs_Click(object sender, RoutedEventArgs e)
+            => RaiseEvent(new RoutedEventArgs(SaveAsClickedEvent));
     }
 }
+
