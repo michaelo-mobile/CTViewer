@@ -19,6 +19,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Text.RegularExpressions;
+using System.Diagnostics;
 
 namespace CTViewer.Views
 {
@@ -35,7 +36,9 @@ namespace CTViewer.Views
         private bool _isDrawMode;
         private DicomFile _currentDicomFile; // Current DICOM file being viewed
         private string _currentDicomPath; // Path of the currently opened DICOM file
-        
+        [Conditional("DEBUG")]
+        static void D(string msg) => Debug.WriteLine(msg);
+
 
         private DicomDataset _currentDataset => _currentDicomFile?.Dataset;
 
@@ -65,8 +68,8 @@ namespace CTViewer.Views
         private void FileButtons_FileOpened(object sender, string filepath)
         {
             try
-            {
-                System.Diagnostics.Debug.WriteLine($"[OPEN] File open started: {filepath}");
+            {               
+                D($"[OPEN] File open started: {filepath}");
 
                 // Load the DICOM file using fo-dicom
                 //clear strokes and undo stack when a new file is opened
@@ -74,55 +77,26 @@ namespace CTViewer.Views
                 var dicomFile = DicomFile.Open(filepath);
                 var pixelData = DicomPixelData.Create(dicomFile.Dataset);
                 var dset = dicomFile.Dataset;
-                foreach (var item in dset)
-                {
-                    if (item.Tag.Group != 0x0011) continue;
 
-                    // Owner/creator string
-                    var owner = item.Tag.PrivateCreator?.ToString() ?? "<none>";
+                #if DEBUG
+                DumpPrivateGroup0011(dset);
+                #endif
 
-                    // VR string
-                    var vr = item.ValueRepresentation?.ToString() ?? "<none>";
-
-                    // Length/size (depends on the item kind)
-                    string lenStr = "-";
-                    if (item is DicomElement el)
-                    {
-#if FO_DICOM5_OR_NEWER
-        // In v5, elements have a Buffer (IByteBuffer) with Size
-        lenStr = (el.Buffer != null) ? el.Buffer.Size.ToString() : "0";
-#else
-                        // Older versions expose Length directly
-                        lenStr = el.Length.ToString();
-#endif
-                    }
-                    else if (item is DicomSequence seq)
-                    {
-                        lenStr = $"seq:{(seq.Items?.Count ?? 0)}";
-                    }
-
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[DUMP] {item.Tag} VR={vr} Len={lenStr} Owner={owner}");
-                }
-
-                System.Diagnostics.Debug.WriteLine($"[OPEN] DICOM loaded. Size: {pixelData.Width}x{pixelData.Height}");
+                D($"[OPEN] DICOM loaded. Size: {pixelData.Width}x{pixelData.Height}");
 
                 int width = pixelData.Width;
                 int height = pixelData.Height;
 
                 // Extract raw pixel bytes from the first frame (DICOM may contain multiple frames)
                 byte[] pixels = pixelData.GetFrame(0).Data;
-                System.Diagnostics.Debug.WriteLine($"[OPEN] Frame bytes length: {pixels.Length}");
 
                 // Convert byte[] to ushort[] since grayscale images are stored as 16-bit integers
                 ushort[] rawPixels = new ushort[pixels.Length / 2];
                 Buffer.BlockCopy(pixels, 0, rawPixels, 0, pixels.Length);
-                System.Diagnostics.Debug.WriteLine($"[OPEN] rawPixels length: {rawPixels.Length}");
 
                 // Automatically compute optimal window center and width using histogram percentiles (1% to 99%)
                 int wl, ww;
                 ComputeAutoWindowLevel(rawPixels, out wl, out ww);
-                System.Diagnostics.Debug.WriteLine($"[OPEN] Auto-computed WL: {wl}, WW: {ww}");
 
                 // set the private parameters for future use
                 _ds = dicomFile.Dataset;
@@ -134,28 +108,24 @@ namespace CTViewer.Views
 
                 // Apply linear window/level scaling to enhance contrast based on wc/ww
                 ushort[] scaledPixels = ApplyWindowLevelTo16Bit(rawPixels, wl, ww);
-                System.Diagnostics.Debug.WriteLine($"[OPEN] Scaled pixels length: {scaledPixels.Length}");
 
                 var edited = CheckIfEdited(dset);
-                System.Diagnostics.Debug.WriteLine($"[OPEN] CheckIfEdited: {edited}");
+                D($"[OPEN] CheckIfEdited: {edited}");
 
                 if (edited.Equals(true))
                 {
-                    System.Diagnostics.Debug.WriteLine("[OPEN] Entering edited branch");
                     LoadInkAndWwWlFromDicom(dset, InkCanvas, out double? savedWw, out double? savedWl);
-                    System.Diagnostics.Debug.WriteLine($"[OPEN] LoadInkAndWwWlFromDicom returned: savedWL={savedWl?.ToString() ?? "<null>"}, savedWW={savedWw?.ToString() ?? "<null>"}");
+                    D($"[OPEN] LoadInkAndWwWlFromDicom returned: savedWL={savedWl?.ToString() ?? "<null>"}, savedWW={savedWw?.ToString() ?? "<null>"}");
 
                     if (savedWw.HasValue && savedWl.HasValue)
                     {
                         _wl = (int)savedWl.Value;
                         _ww = (int)savedWw.Value;
-                        System.Diagnostics.Debug.WriteLine("Image is showing. WL: " + _wl + " WW: " + _ww);
                     }
                     else
                     {
                         _wl = wl;
                         _ww = ww;
-                        System.Diagnostics.Debug.WriteLine("Image is showing. WL: " + _wl + " WW: " + _ww);
                     }
 
                     // 🔹 Sync sliders & overlay here
@@ -164,7 +134,7 @@ namespace CTViewer.Views
                     
                     
                     ushort[] scaledPixelsEdited = ApplyWindowLevelTo16Bit(rawPixels, _wl, _ww);
-                    System.Diagnostics.Debug.WriteLine($"[OPEN] Edited scaled pixels length: {scaledPixelsEdited.Length}");
+
                     // start to load the saved strokes into the InkCanvas
                     InkCanvas.Strokes = new StrokeCollection();   // reset
 
@@ -173,11 +143,10 @@ namespace CTViewer.Views
                         using var ms = new MemoryStream(isf);
                         // if this code can run off the UI thread, marshal it:
                         Dispatcher.Invoke(() => InkCanvas.Strokes = new StrokeCollection(ms));
-                        System.Diagnostics.Debug.WriteLine($"[OPEN] Ink strokes reloaded: {InkCanvas.Strokes.Count}");
                     }
                     else
                     {
-                        System.Diagnostics.Debug.WriteLine("[OPEN] No strokes in file.");
+                        D("[OPEN] No strokes in file.");
                     }
                     var bitmap = BitmapSource.Create(
                         width,
@@ -187,12 +156,11 @@ namespace CTViewer.Views
                         scaledPixelsEdited,
                         width * 2
                     );
-                    System.Diagnostics.Debug.WriteLine("Image is showing with edits " + _wl);
+
                     MainImage.Source = bitmap;
                 }
                 else if (edited.Equals(false))
                 {
-                    System.Diagnostics.Debug.WriteLine("[OPEN] Entering unedited branch");
 
                     // 🔹 Sync sliders & overlay here
                     InitializeWlWwUI(_wl, _ww);
@@ -205,7 +173,7 @@ namespace CTViewer.Views
                         scaledPixels,
                         width * 2
                     );
-                    System.Diagnostics.Debug.WriteLine("Image is showing");
+
                     MainImage.Source = bitmap;
                 }
 
@@ -215,11 +183,10 @@ namespace CTViewer.Views
                 SetPatientInfo(dset);
                 SetDrawMode(false);
 
-                System.Diagnostics.Debug.WriteLine("[OPEN] File open complete");
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[OPEN] EXCEPTION: {ex}");
+                D($"[OPEN] EXCEPTION: {ex}");
                 MessageBox.Show($"Error loading DICOM file: {ex.Message}");
             }
         }
@@ -725,18 +692,18 @@ namespace CTViewer.Views
             {
                 var wwValue = getCurrentCurrentWW();
                 ds.AddOrUpdate(InkTags.WindowWidthTag, wwValue);   // (0028,1051)
-                System.Diagnostics.Debug.WriteLine($"[SAVE] WW being saved: {wwValue}");
+                D($"[SAVE] WW being saved: {wwValue}");
             }
             else
             {
-                System.Diagnostics.Debug.WriteLine("[SAVE] WW is null — not saving");
+                D("[SAVE] WW is null — not saving");
             }
 
             if (wl.HasValue)
             {
                 var wlValue = getCurrentCurrentWL();
                 ds.AddOrUpdate(InkTags.WindowCenterTag, wlValue);  // (0028,1050)
-                System.Diagnostics.Debug.WriteLine($"[SAVE] WL being saved: {wlValue}");
+                D($"[SAVE] WL being saved: {wlValue}");
             }
             else
             {
@@ -745,7 +712,7 @@ namespace CTViewer.Views
 
             // --- Private: write creator FIRST, then strokes ---
             ds.AddOrUpdate(new DicomLongString(InkTags.CreatorTag, InkTags.CreatorValue)); // (0011,0010)
-            System.Diagnostics.Debug.WriteLine($"[SAVE] Creator tag set: {InkTags.CreatorTag} = {InkTags.CreatorValue}");
+            D($"[SAVE] Creator tag set: {InkTags.CreatorTag} = {InkTags.CreatorValue}");
 
             using var ms = new MemoryStream();
             inkCanvas.Strokes.Save(ms);                                  // serialize to ISF bytes
@@ -753,16 +720,16 @@ namespace CTViewer.Views
             if (isf.Length > 0)                                          // only write if there’s data
             {
                 ds.AddOrUpdate(new DicomOtherByte(InkTags.StrokesTag, isf)); // (0011,1001) OB
-                System.Diagnostics.Debug.WriteLine($"[SAVE] Strokes saved: {isf.Length} bytes");
+                D($"[SAVE] Strokes saved: {isf.Length} bytes");
             }
             else
             {
-                System.Diagnostics.Debug.WriteLine("[SAVE] No strokes to save");
+                D("[SAVE] No strokes to save");
             }
 
             // Save file
             new DicomFile(ds).Save(outPath);
-            System.Diagnostics.Debug.WriteLine($"[SAVE] Saved DICOM with ink to: {outPath}");
+            D($"[SAVE] Saved DICOM with ink to: {outPath}");
         }
 
         public void LoadInkAndWwWlFromDicom(
@@ -775,26 +742,26 @@ namespace CTViewer.Views
             ww = ds.TryGetSingleValue(InkTags.WindowWidthTag, out double wv) ? wv : (double?)null;
             wl = ds.TryGetSingleValue(InkTags.WindowCenterTag, out double lv) ? lv : (double?)null;
 
-            System.Diagnostics.Debug.WriteLine($"[LOAD] WW loaded: {(ww.HasValue ? ww.Value.ToString() : "<null>")}");
-            System.Diagnostics.Debug.WriteLine($"[LOAD] WL loaded: {(wl.HasValue ? wl.Value.ToString() : "<null>")}");
+            D($"[LOAD] WW loaded: {(ww.HasValue ? ww.Value.ToString() : "<null>")}");
+            D($"[LOAD] WL loaded: {(wl.HasValue ? wl.Value.ToString() : "<null>")}");
 
             // restore strokes (if our private creator + bytes exist)
             ink.Strokes = new StrokeCollection();
             ds.TryGetSingleValue<string>(InkTags.CreatorTag, out var creator);
             ds.TryGetValues<byte>(InkTags.StrokesTag, out var bytes);
 
-            System.Diagnostics.Debug.WriteLine($"[LOAD] Private creator value: {creator ?? "<null>"}");
-            System.Diagnostics.Debug.WriteLine($"[LOAD] Stroke bytes length: {(bytes != null ? bytes.Length : 0)}");
+            D($"[LOAD] Private creator value: {creator ?? "<null>"}");
+            D($"[LOAD] Stroke bytes length: {(bytes != null ? bytes.Length : 0)}");
 
             if (creator == InkTags.CreatorValue && bytes?.Length > 0)
             {
                 using var ms = new MemoryStream(bytes);
                 ink.Strokes = new StrokeCollection(ms);
-                System.Diagnostics.Debug.WriteLine($"[LOAD] Ink strokes reloaded: {ink.Strokes.Count}");
+                D($"[LOAD] Ink strokes reloaded: {ink.Strokes.Count}");
             }
             else
             {
-                System.Diagnostics.Debug.WriteLine("[LOAD] No ink strokes loaded.");
+                D("[LOAD] No ink strokes loaded.");
             }
         }
 
@@ -842,5 +809,26 @@ namespace CTViewer.Views
             return (double)WWSlider.Value; 
         }
 
-    }
+        #region Debug/Diagnostics
+        [Conditional("DEBUG")]
+        private static void DumpPrivateGroup0011(DicomDataset ds)
+        {
+            foreach (var item in ds)
+            {
+                if (item.Tag.Group != 0x0011) continue;
+
+                var owner = item.Tag.PrivateCreator?.ToString() ?? "<none>";
+                var vr = item.ValueRepresentation?.ToString() ?? "<none>";
+
+                string lenStr = "-";
+                if (item is DicomElement el)
+                    lenStr = (el.Buffer != null) ? el.Buffer.Size.ToString() : "0";
+                else if (item is DicomSequence seq)
+                    lenStr = $"seq:{(seq.Items?.Count ?? 0)}";
+
+                Debug.WriteLine($"[DUMP] {item.Tag} VR={vr} Len={lenStr} Owner={owner}");
+            }
+        }
+        #endregion
+}
 }
