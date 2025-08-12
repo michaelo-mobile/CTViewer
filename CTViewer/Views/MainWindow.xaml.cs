@@ -46,6 +46,7 @@ namespace CTViewer.Views
         {
             InitializeComponent();
             FileButtons.FileOpened += FileButtons_FileOpened;
+            FileButtons.TwoPlayerModeChanged += OnTwoPlayerModeChanged;
             // Hook events from your DrawingButtons control
             DrawingCanvas.StrokeSizeChanged += OnStrokeSizeChanged;
             DrawingCanvas.StrokeColorChanged += OnStrokeColorChanged;
@@ -60,6 +61,27 @@ namespace CTViewer.Views
             MainImage.MouseMove += MainImage_MouseMove;
             MainImage.MouseLeave += (_, __) => XYHU.Text = "X: —   Y: —    HU: —";
 
+        }
+
+        // method for the two player mode toggle
+        private void OnTwoPlayerModeChanged(object? sender, bool on)
+        {
+            // Do your side-by-side show/hide + lock controls here
+            // right side image is the two player mode image
+            RightPane.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+            RightCol.Width = on ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+            SetSinglePaneControlsEnabled(!on);
+
+            if (on)
+            {
+                var next = GetNextDicomPath(_currentDicomPath);
+                if (next != null) LoadRightPane(next);
+            }
+            else
+            {
+                RightImage.Source = null;
+                RightInkCanvas.Strokes = new StrokeCollection();
+            }
         }
         /// <summary> Start of Code for opening Dicom Image with clarity and optimized pixels
         /// Event handler triggered when a file is opened from FileButtons.
@@ -829,6 +851,99 @@ namespace CTViewer.Views
                 Debug.WriteLine($"[DUMP] {item.Tag} VR={vr} Len={lenStr} Owner={owner}");
             }
         }
+
         #endregion
-}
+        // Add the missing method definition for SetSinglePaneControlsEnabled.
+        // This method is likely intended to enable or disable controls when switching between single-pane and two-pane modes.
+
+        private void SetSinglePaneControlsEnabled(bool enabled)
+        {
+            // Assuming you have controls that need to be enabled/disabled in single-pane mode,
+            // you can add logic here to toggle their state based on the 'enabled' parameter.
+
+            // Example: Enable or disable specific UI elements
+            LeftPane.IsEnabled = enabled; // Replace 'LeftPane' with the actual control name(s) in your application.
+            PresetComboBox.IsEnabled = enabled; // Replace 'PresetComboBox' with the actual control name(s) in your application.
+            WLSlider.IsEnabled = enabled; // Replace 'WLSlider' with the actual control name(s) in your application.
+            WWSlider.IsEnabled = enabled; // Replace 'WWSlider' with the actual control name(s) in your application..
+        }
+        // Add the missing method definition for GetNextDicomPath.
+        // This method is likely intended to retrieve the path of the next DICOM file in the same folder as the current file.
+
+        private string GetNextDicomPath(string currentPath)
+        {
+            if (string.IsNullOrEmpty(currentPath) || !File.Exists(currentPath))
+                return null;
+
+            var directory = Path.GetDirectoryName(currentPath);
+            var files = Directory.GetFiles(directory, "*.dcm"); // Assuming DICOM files have a .dcm extension
+            Array.Sort(files); // Sort files alphabetically
+
+            var currentIndex = Array.IndexOf(files, currentPath);
+            if (currentIndex >= 0 && currentIndex < files.Length - 1)
+            {
+                return files[currentIndex + 1]; // Return the next file in the list
+            }
+
+            return null; // No next file found
+        }
+        // Add the missing method definition for LoadRightPane.
+        // This method is likely intended to load the next DICOM file into the right pane in two-player mode.
+
+        private void LoadRightPane(string dicomPath)
+        {
+            try
+            {
+                // Load the DICOM file using fo-dicom
+                var dicomFile = DicomFile.Open(dicomPath);
+                var pixelData = DicomPixelData.Create(dicomFile.Dataset);
+
+                int width = pixelData.Width;
+                int height = pixelData.Height;
+
+                // Extract raw pixel bytes from the first frame
+                byte[] pixels = pixelData.GetFrame(0).Data;
+
+                // Convert byte[] to ushort[] since grayscale images are stored as 16-bit integers
+                ushort[] rawPixels = new ushort[pixels.Length / 2];
+                Buffer.BlockCopy(pixels, 0, rawPixels, 0, pixels.Length);
+
+                // Automatically compute optimal window center and width
+                int wl, ww;
+                ComputeAutoWindowLevel(rawPixels, out wl, out ww);
+
+                // Apply linear window/level scaling
+                ushort[] scaledPixels = ApplyWindowLevelTo16Bit(rawPixels, wl, ww);
+
+                // Create a BitmapSource for the right pane
+                var bitmap = BitmapSource.Create(
+                    width,
+                    height,
+                    96, 96,
+                    PixelFormats.Gray16,
+                    null,
+                    scaledPixels,
+                    width * 2
+                );
+
+                // Update the right pane image
+                RightImage.Source = bitmap;
+
+                // Update the right pane patient info
+                SetPatientInfo(dicomFile.Dataset);
+
+                // Clear any existing strokes in the right InkCanvas
+                RightInkCanvas.Strokes = new StrokeCollection();
+            }
+            catch (Exception ex)
+            {
+                D($"[LOAD RIGHT PANE] EXCEPTION: {ex}");
+                MessageBox.Show($"Error loading DICOM file for right pane: {ex.Message}");
+            }
+        }
+        
+        //start of methods for two-player mode, need to be able to open the folder so you can view the next image ahead
+
+
+    }
 }

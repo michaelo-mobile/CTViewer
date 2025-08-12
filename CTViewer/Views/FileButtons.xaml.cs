@@ -21,17 +21,18 @@ namespace CTViewer.Views
     /// </summary>
     public partial class FileButtons : UserControl
     {
+        public event EventHandler<bool> TwoPlayerModeChanged;
         public FileButtons()
         {
             InitializeComponent();
         }
-        private void OpenButton_Click(object sender, RoutedEventArgs e) 
+        private void OpenButton_Click(object sender, RoutedEventArgs e)
         {
             var dialog = new Microsoft.Win32.OpenFileDialog();
-         dialog.Filter = "DICOM files (*.dcm)|*.dcm|All files (*.*)|*.*";
-        if (dialog.ShowDialog()==true)
-        { 
-           FileOpened?.Invoke(this, dialog.FileName);
+            dialog.Filter = "DICOM files (*.dcm)|*.dcm|All files (*.*)|*.*";
+            if (dialog.ShowDialog() == true)
+            {
+                FileOpened?.Invoke(this, dialog.FileName);
 
             }
 
@@ -55,7 +56,19 @@ namespace CTViewer.Views
 
         // wire this to your Save As button in FileButtons.xaml: Click="SaveAsBtn_Click"
         private void SaveAs_Click(object sender, RoutedEventArgs e)
-            => RaiseEvent(new RoutedEventArgs(SaveAsClickedEvent));
+        {      RaiseEvent(new RoutedEventArgs(SaveAsClickedEvent));
+    }
+        private void TwoPlayerMode_Checked(object sender, RoutedEventArgs e)
+        {
+            // Handle the Two Player Mode checkbox checked event
+            // You can add your logic here
+            TwoPlayerModeChanged?.Invoke(this, true);
+        }
+        private void TwoPlayerMode_Unchecked(object sender, RoutedEventArgs e)
+        {
+            // Handle the Two Player Mode checkbox unchecked event
+            // You can add your logic here
+            TwoPlayerModeChanged?.Invoke(this, false);
+        }
     }
 }
-

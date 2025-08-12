@@ -13,6 +13,7 @@
             <Button Content="Open" Margin="5" Click="OpenButton_Click"/>
             <Button Content="Save As" Margin="5" Click="SaveAs_Click" x:Name="SaveAsButton"/>
             <Button Content="Export" Margin="5"/>
+            <ToggleButton x:Name="TwoPlayerMode" Content="Side by Side Mode" Checked="TwoPlayerMode_Checked" Unchecked="TwoPlayerMode_Unchecked" Margin="5"/>
         </StackPanel>
     </Grid>
 </UserControl>
