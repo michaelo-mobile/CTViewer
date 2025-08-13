@@ -29,22 +29,31 @@ namespace CTViewer.Views
         private ushort[] _raw16;       // Original 16-bit pixels
         private int _width, _height;   // Image dimensions
         private DicomDataset _ds;      // DICOM dataset for metadata
-        private int _wl, _ww;          // Current Window Level / Width
+        private int _wl, _ww;
+        private int _rightwl, _rightww;// Current Window Level / Width
+        private int _rightWidth, _rightHeight;
+        private ushort[] _rightRaw16;
         private int _defaultwl, _defaultww; // Default WL/WW for reset
         private bool _suppressSliderEvents; // To prevents double renders when sliders are moved across
         private readonly Stack<Stroke> _undo = new();
         private bool _isDrawMode;
         private DicomFile _currentDicomFile; // Current DICOM file being viewed
         private string _currentDicomPath; // Path of the currently opened DICOM file
+        private DicomFile _rightDicomFile; // path for the right pane in two-player mode
+        private string _rightDicomPath; // path for the right pane in two-player mode
         [Conditional("DEBUG")]
         static void D(string msg) => Debug.WriteLine(msg);
+        private enum Pane { Left, Right }
+        private Pane _activePane = Pane.Left;
+        private bool _twoPlayerMode = false;
+        private bool _drawingEnabled = false; // whatever your Draw button toggles
 
-
-        private DicomDataset _currentDataset => _currentDicomFile?.Dataset;
 
         public MainWindow()
         {
             InitializeComponent();
+            InkCanvas.StrokeCollected += (s, e) => D($"[INK] Left stroke count={InkCanvas.Strokes.Count}");
+            RightInkCanvas.StrokeCollected += (s, e) => D($"[INK] Right stroke count={RightInkCanvas.Strokes.Count}");
             FileButtons.FileOpened += FileButtons_FileOpened;
             FileButtons.TwoPlayerModeChanged += OnTwoPlayerModeChanged;
             // Hook events from your DrawingButtons control
@@ -60,29 +69,80 @@ namespace CTViewer.Views
             // Hover readout wiring
             MainImage.MouseMove += MainImage_MouseMove;
             MainImage.MouseLeave += (_, __) => XYHU.Text = "X: —   Y: —    HU: —";
+            // debuggin for the pane selection
+            // Make sure these elements can receive clicks
+            LeftSurface.Background = System.Windows.Media.Brushes.Transparent;
+            RightSurface.Background = System.Windows.Media.Brushes.Transparent;
+
+            // Attach both Preview* (tunneling) and non-Preview (bubbling)
+            HookMouse("LEFT-VIEWBOX", LeftViewbox);
+            HookMouse("LEFT-SURFACE", LeftSurface);
+            HookMouse("LEFT-INK", InkCanvas);
+
+            HookMouse("RIGHT-VIEWBOX", RightViewbox);
+            HookMouse("RIGHT-SURFACE", RightSurface);
+            HookMouse("RIGHT-INK", RightInkCanvas);
+
+            // Also guarantee we see events even if a child marks them handled
+            LeftSurface.AddHandler(UIElement.MouseDownEvent,
+                new MouseButtonEventHandler(LeftSurface_MouseDown), /*handledEventsToo*/ true);
+            RightSurface.AddHandler(UIElement.MouseDownEvent,
+                new MouseButtonEventHandler(RightSurface_MouseDown), true);
+
 
         }
-
-        // method for the two player mode toggle
-        private void OnTwoPlayerModeChanged(object? sender, bool on)
+        private void HookMouse(string tag, UIElement el)
         {
-            // Do your side-by-side show/hide + lock controls here
-            // right side image is the two player mode image
-            RightPane.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
-            RightCol.Width = on ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
-            SetSinglePaneControlsEnabled(!on);
+            el.PreviewMouseDown += (s, e) => LogMouse("PreviewDown", tag, s, e);
+            el.MouseDown += (s, e) => LogMouse("Down", tag, s, e);
+            el.PreviewMouseUp += (s, e) => LogMouse("PreviewUp", tag, s, e);
+            el.MouseUp += (s, e) => LogMouse("Up", tag, s, e);
+        }
+        private void LogMouse(string phase, string tag, object sender, MouseButtonEventArgs e)
+        {
+            var pL = LeftSurface != null ? e.GetPosition(LeftSurface) : new System.Windows.Point(double.NaN, double.NaN);
+            var pR = RightSurface != null ? e.GetPosition(RightSurface) : new System.Windows.Point(double.NaN, double.NaN);
+            D($"[MOUSE] {phase,-11} tag={tag,-14} btn={e.ChangedButton,-5} clicks={e.ClickCount} handled={e.Handled} " +
+              $"posL=({pL.X:0},{pL.Y:0}) posR=({pR.X:0},{pR.Y:0}) sender={sender.GetType().Name}");
+        }
+        // method for the two player mode toggle
+        private void OnTwoPlayerModeChanged(object sender, bool on)
+        {
+            // show/hide right viewer + give/take its column space (ImagesLayout: 0=left, 1=right)
+            RightViewbox.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+            ImagesLayout.ColumnDefinitions[1].Width =
+                on ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+
+            // keep controls enabled; they route via _activePane
+            SetSinglePaneControlsEnabled(true);
+            WLSlider.IsEnabled = WWSlider.IsEnabled = true;
+
+            // pick which pane the controls target (default to Left on entry)
+            SetActivePane(Pane.Left);
+
+            // ensure left tone mapping sticks after layout change
+            RenderLeftWithCurrentWlWw();
 
             if (on)
             {
+                // auto-load the “next” file for right side (your existing helper)
                 var next = GetNextDicomPath(_currentDicomPath);
-                if (next != null) LoadRightPane(next);
+                if (!string.IsNullOrEmpty(next)) LoadRightPane(next);
             }
             else
             {
+
                 RightImage.Source = null;
                 RightInkCanvas.Strokes = new StrokeCollection();
+                if (RightWlWwText != null) RightWlWwText.Text = "WL: —   WW: —";
             }
+
+            // route ink input to active side (Left by default here)
+            ApplyInkEditingModeToActive();
         }
+
+
+
         /// <summary> Start of Code for opening Dicom Image with clarity and optimized pixels
         /// Event handler triggered when a file is opened from FileButtons.
         /// Loads and displays a 16-bit grayscale DICOM image with auto window/level adjustment.
@@ -90,7 +150,7 @@ namespace CTViewer.Views
         private void FileButtons_FileOpened(object sender, string filepath)
         {
             try
-            {               
+            {
                 D($"[OPEN] File open started: {filepath}");
 
                 // Load the DICOM file using fo-dicom
@@ -118,6 +178,7 @@ namespace CTViewer.Views
 
                 // Automatically compute optimal window center and width using histogram percentiles (1% to 99%)
                 int wl, ww;
+
                 ComputeAutoWindowLevel(rawPixels, out wl, out ww);
 
                 // set the private parameters for future use
@@ -127,6 +188,10 @@ namespace CTViewer.Views
                 _height = height;
                 _wl = wl;
                 _ww = ww;
+                LeftSurface.Width = _width;
+                LeftSurface.Height = _height;
+                InkCanvas.Width = _width;
+                InkCanvas.Height = _height;
 
                 // Apply linear window/level scaling to enhance contrast based on wc/ww
                 ushort[] scaledPixels = ApplyWindowLevelTo16Bit(rawPixels, wl, ww);
@@ -153,8 +218,8 @@ namespace CTViewer.Views
                     // 🔹 Sync sliders & overlay here
                     InitializeWlWwUI(_wl, _ww);
 
-                    
-                    
+
+
                     ushort[] scaledPixelsEdited = ApplyWindowLevelTo16Bit(rawPixels, _wl, _ww);
 
                     // start to load the saved strokes into the InkCanvas
@@ -178,7 +243,14 @@ namespace CTViewer.Views
                         scaledPixelsEdited,
                         width * 2
                     );
+                    // native pixel size of the bitmap you just created
+                    LeftSurface.Width = _width;
+                    LeftSurface.Height = _height;
 
+                    InkCanvas.Width = _width;
+                    InkCanvas.Height = _height;
+
+                    // image just gets the source; Stretch="Fill" makes it match LeftSurface
                     MainImage.Source = bitmap;
                 }
                 else if (edited.Equals(false))
@@ -203,7 +275,7 @@ namespace CTViewer.Views
                 _currentDicomPath = filepath;
 
                 SetPatientInfo(dset);
-                SetDrawMode(false);
+                _drawingEnabled = true;
 
             }
             catch (Exception ex)
@@ -211,7 +283,9 @@ namespace CTViewer.Views
                 D($"[OPEN] EXCEPTION: {ex}");
                 MessageBox.Show($"Error loading DICOM file: {ex.Message}");
             }
-        }
+        } private DicomDataset _currentDataset => _currentDicomFile?.Dataset;
+
+
 
 
         static class InkTags
@@ -538,47 +612,27 @@ namespace CTViewer.Views
             return (px, py);
         }
 
-        private void WWSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-        {
-            if (_raw16 == null) return; // No image loaded
-            if (_suppressSliderEvents) return; // check if there is preset being applied
-            _ww = (int)e.NewValue;
-            // Re-apply window/level scaling with new width
-            ushort[] scaledPixels = ApplyWindowLevelTo16Bit(_raw16, _wl, _ww);
-            // Update the displayed image
-            var bitmap = BitmapSource.Create(
-                _width,
-                _height,
-                96, 96,
-                PixelFormats.Gray16,
-                null,
-                scaledPixels,
-                _width * 2
-            );
-            MainImage.Source = bitmap;
-            WlWwText.Text = $"WL: {_wl}   WW: {_ww}";
-        }
 
         private void WLSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
-            if (_raw16 == null) return; // No image loaded
-            if (_suppressSliderEvents) return; // check if there is preset being applied
-            _wl = (int)e.NewValue;
-            // Re-apply window/level scaling with new level
-            ushort[] scaledPixels = ApplyWindowLevelTo16Bit(_raw16, _wl, _ww);
-            // Update the displayed image
-            var bitmap = BitmapSource.Create(
-                _width,
-                _height,
-                96, 96,
-                PixelFormats.Gray16,
-                null,
-                scaledPixels,
-                _width * 2
-            );
-            MainImage.Source = bitmap;
+            if (_suppressSliderEvents || !ActiveHasRaw()) return;
+            SetActiveWlWw((int)e.NewValue, ActiveWW());
+            RenderActive();
+            // update left/right WL/WW labels if you have two
             WlWwText.Text = $"WL: {_wl}   WW: {_ww}";
+            if (RightWlWwText != null) RightWlWwText.Text = $"WL: {_rightwl}   WW: {_rightww}";
         }
+
+        private void WWSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressSliderEvents || !ActiveHasRaw()) return;
+            SetActiveWlWw(ActiveWL(), (int)e.NewValue);
+            RenderActive();
+            WlWwText.Text = $"WL: {_wl}   WW: {_ww}";
+            if (RightWlWwText != null) RightWlWwText.Text = $"WL: {_rightwl}   WW: {_rightww}";
+        }
+
+
 
         private void InitializeWlWwUI(int wl, int ww)
         {
@@ -700,84 +754,61 @@ namespace CTViewer.Views
         {
             var ds = sourceFile.Dataset.Clone();
 
-            // --- Make this a NEW object (required) ---
-            var newSop = DicomUIDGenerator.GenerateDerivedFromUUID(); //need a new sop instance UID per image
+            // New instance UID
+            var newSop = DicomUIDGenerator.GenerateDerivedFromUUID();
             ds.AddOrUpdate(DicomTag.SOPInstanceUID, newSop);
 
-            // (Optional) keep same series so it stays grouped with originals.
-            // If you *want* a new series, uncomment these two lines:
-            // var oldSeries = ds.GetSingleValue<DicomUID>(DicomTag.SeriesInstanceUID);
-            // ds.AddOrUpdate(DicomTag.SeriesInstanceUID, DicomUIDGenerator.Generate(oldSeries));
-
-            // --- Standard display tags (don’t change pixels) ---
+            // --- Write *the passed-in* WW/WL (not globals) ---
             if (ww.HasValue)
             {
-                var wwValue = getCurrentCurrentWW();
-                ds.AddOrUpdate(InkTags.WindowWidthTag, wwValue);   // (0028,1051)
-                D($"[SAVE] WW being saved: {wwValue}");
+                ds.AddOrUpdate(InkTags.WindowWidthTag, ww.Value);      // (0028,1051)
+                D($"[SAVE] WW (arg) saved: {ww.Value}");
             }
-            else
-            {
-                D("[SAVE] WW is null — not saving");
-            }
+            else D("[SAVE] WW arg is null — not saving");
 
             if (wl.HasValue)
             {
-                var wlValue = getCurrentCurrentWL();
-                ds.AddOrUpdate(InkTags.WindowCenterTag, wlValue);  // (0028,1050)
-                D($"[SAVE] WL being saved: {wlValue}");
+                ds.AddOrUpdate(InkTags.WindowCenterTag, wl.Value);     // (0028,1050)
+                D($"[SAVE] WL (arg) saved: {wl.Value}");
             }
-            else
-            {
-                System.Diagnostics.Debug.WriteLine("[SAVE] WL is null — not saving");
-            }
+            else D("[SAVE] WL arg is null — not saving");
 
-            // --- Private: write creator FIRST, then strokes ---
+            // Private creator + strokes
             ds.AddOrUpdate(new DicomLongString(InkTags.CreatorTag, InkTags.CreatorValue)); // (0011,0010)
-            D($"[SAVE] Creator tag set: {InkTags.CreatorTag} = {InkTags.CreatorValue}");
-
             using var ms = new MemoryStream();
-            inkCanvas.Strokes.Save(ms);                                  // serialize to ISF bytes
+            inkCanvas.Strokes.Save(ms);
             var isf = ms.ToArray();
-            if (isf.Length > 0)                                          // only write if there’s data
+
+            if (isf.Length > 0)
             {
-                ds.AddOrUpdate(new DicomOtherByte(InkTags.StrokesTag, isf)); // (0011,1001) OB
+                ds.AddOrUpdate(new DicomOtherByte(InkTags.StrokesTag, isf));               // (0011,1001)
                 D($"[SAVE] Strokes saved: {isf.Length} bytes");
             }
-            else
-            {
-                D("[SAVE] No strokes to save");
-            }
+            else D("[SAVE] No strokes to save");
 
-            // Save file
             new DicomFile(ds).Save(outPath);
             D($"[SAVE] Saved DICOM with ink to: {outPath}");
         }
 
-        public void LoadInkAndWwWlFromDicom(
-    DicomDataset ds,
-    InkCanvas ink,
-    out double? ww,
-    out double? wl)
+
+        public void LoadInkAndWwWlFromDicom(DicomDataset ds, InkCanvas ink,
+                                    out double? ww, out double? wl)
         {
-            // read saved WW/WL if present; otherwise leave as null
             ww = ds.TryGetSingleValue(InkTags.WindowWidthTag, out double wv) ? wv : (double?)null;
             wl = ds.TryGetSingleValue(InkTags.WindowCenterTag, out double lv) ? lv : (double?)null;
+            D($"[LOAD] WW={ww?.ToString() ?? "<null>"}  WL={wl?.ToString() ?? "<null>"}");
 
-            D($"[LOAD] WW loaded: {(ww.HasValue ? ww.Value.ToString() : "<null>")}");
-            D($"[LOAD] WL loaded: {(wl.HasValue ? wl.Value.ToString() : "<null>")}");
-
-            // restore strokes (if our private creator + bytes exist)
             ink.Strokes = new StrokeCollection();
+
             ds.TryGetSingleValue<string>(InkTags.CreatorTag, out var creator);
             ds.TryGetValues<byte>(InkTags.StrokesTag, out var bytes);
+            D($"[LOAD] Creator='{creator ?? "<null>"}'  bytes={(bytes?.Length ?? 0)}");
 
-            D($"[LOAD] Private creator value: {creator ?? "<null>"}");
-            D($"[LOAD] Stroke bytes length: {(bytes != null ? bytes.Length : 0)}");
-
-            if (creator == InkTags.CreatorValue && bytes?.Length > 0)
+            if (!string.IsNullOrEmpty(creator) &&
+                string.Equals(creator, InkTags.CreatorValue, StringComparison.OrdinalIgnoreCase) &&
+                bytes?.Length > 0)
             {
-                using var ms = new MemoryStream(bytes);
+                using var ms = new MemoryStream(bytes, writable: false);
                 ink.Strokes = new StrokeCollection(ms);
                 D($"[LOAD] Ink strokes reloaded: {ink.Strokes.Count}");
             }
@@ -786,6 +817,7 @@ namespace CTViewer.Views
                 D("[LOAD] No ink strokes loaded.");
             }
         }
+
 
         private string MakeNextVersionName(string currentPath)
         {
@@ -799,27 +831,36 @@ namespace CTViewer.Views
         }
         private void SaveAsClickedEvent(object sender, RoutedEventArgs e)
         {
-            if (_currentDicomFile == null)
+            // pick the active pane’s file & path
+            var file = (_activePane == Pane.Left) ? _currentDicomFile : _rightDicomFile;
+            var basePath = (_activePane == Pane.Left) ? _currentDicomPath : _rightDicomPath;
+
+            if (file == null)
             {
-                MessageBox.Show("Open a DICOM first.");
+                MessageBox.Show("No DICOM loaded for the active pane.");
                 return;
             }
-            var dlg = new Microsoft.Win32.SaveFileDialog
+
+            var dlg = new SaveFileDialog
             {
-                Filter = "DICOM file (*.dcm)|*.dcm",
-                FileName = MakeNextVersionName(_currentDicomPath)
+                Filter = "DICOM file (*.dcm)|*.dcm|All files (*.*)|*.*",
+                FileName = MakeNextVersionName(basePath),
+                InitialDirectory = string.IsNullOrEmpty(basePath) ? null : Path.GetDirectoryName(basePath)
             };
+
             if (dlg.ShowDialog() == true)
             {
+                // Use ACTIVE pane state, not slider helpers
                 SaveWorkingDicomWithInk(
-                    _currentDicomFile,    // the original you opened
-                    getCurrentCurrentWW(), getCurrentCurrentWL(), // from your sliders
-                    InkCanvas,            // current strokes
+                    file,
+                    (double)ActiveWW(), (double)ActiveWL(),
+                    ActiveInk(),
                     dlg.FileName);
-            }    
-                
+
+                D($"[SAVE-AS] pane={_activePane} WL={ActiveWL()} WW={ActiveWW()} -> {dlg.FileName}");
             }
-        
+        }
+
         private double getCurrentCurrentWL()
         {
             // Get the current values from the sliders
@@ -828,7 +869,7 @@ namespace CTViewer.Views
         private double getCurrentCurrentWW()
         {
             // Get the current values from the sliders
-            return (double)WWSlider.Value; 
+            return (double)WWSlider.Value;
         }
 
         #region Debug/Diagnostics
@@ -858,17 +899,17 @@ namespace CTViewer.Views
 
         private void SetSinglePaneControlsEnabled(bool enabled)
         {
-            // Assuming you have controls that need to be enabled/disabled in single-pane mode,
-            // you can add logic here to toggle their state based on the 'enabled' parameter.
+            // Keep WL/WW and presets usable in 2-player
+            WLSlider.IsEnabled = true;
+            WWSlider.IsEnabled = true;
+            PresetComboBox.IsEnabled = true;
 
-            // Example: Enable or disable specific UI elements
-            LeftPane.IsEnabled = enabled; // Replace 'LeftPane' with the actual control name(s) in your application.
-            PresetComboBox.IsEnabled = enabled; // Replace 'PresetComboBox' with the actual control name(s) in your application.
-            WLSlider.IsEnabled = enabled; // Replace 'WLSlider' with the actual control name(s) in your application.
-            WWSlider.IsEnabled = enabled; // Replace 'WWSlider' with the actual control name(s) in your application..
+            // Disable the risky stuff while in 2-player
+            //DrawButton.IsEnabled = enabled;
+            //EraseButton.IsEnabled = enabled;
+            //ClearButton.IsEnabled = enabled;
+            //SaveAsButton.IsEnabled = enabled;
         }
-        // Add the missing method definition for GetNextDicomPath.
-        // This method is likely intended to retrieve the path of the next DICOM file in the same folder as the current file.
 
         private string GetNextDicomPath(string currentPath)
         {
@@ -892,58 +933,201 @@ namespace CTViewer.Views
 
         private void LoadRightPane(string dicomPath)
         {
-            try
-            {
-                // Load the DICOM file using fo-dicom
-                var dicomFile = DicomFile.Open(dicomPath);
-                var pixelData = DicomPixelData.Create(dicomFile.Dataset);
+            var dicom = DicomFile.Open(dicomPath);
+            var ds = dicom.Dataset;
+            var px = DicomPixelData.Create(ds);
 
-                int width = pixelData.Width;
-                int height = pixelData.Height;
+            // cache file + path for Save As
+            _rightDicomFile = dicom;
+            _rightDicomPath = dicomPath;
 
-                // Extract raw pixel bytes from the first frame
-                byte[] pixels = pixelData.GetFrame(0).Data;
+            // cache native size + raw pixels
+            _rightWidth = px.Width;
+            _rightHeight = px.Height;
 
-                // Convert byte[] to ushort[] since grayscale images are stored as 16-bit integers
-                ushort[] rawPixels = new ushort[pixels.Length / 2];
-                Buffer.BlockCopy(pixels, 0, rawPixels, 0, pixels.Length);
+            byte[] frame = px.GetFrame(0).Data;
+            _rightRaw16 = new ushort[frame.Length / 2];
+            Buffer.BlockCopy(frame, 0, _rightRaw16, 0, frame.Length);
 
-                // Automatically compute optimal window center and width
-                int wl, ww;
-                ComputeAutoWindowLevel(rawPixels, out wl, out ww);
+            // baseline auto WL/WW
+            ComputeAutoWindowLevel(_rightRaw16, out int wlAuto, out int wwAuto);
 
-                // Apply linear window/level scaling
-                ushort[] scaledPixels = ApplyWindowLevelTo16Bit(rawPixels, wl, ww);
+            // load saved WL/WW + ink directly into RightInkCanvas
+            LoadInkAndWwWlFromDicom(ds, RightInkCanvas, out double? savedWw, out double? savedWl);
+            _rightwl = savedWl.HasValue ? (int)savedWl.Value : wlAuto;
+            _rightww = savedWw.HasValue ? (int)savedWw.Value : wwAuto;
 
-                // Create a BitmapSource for the right pane
-                var bitmap = BitmapSource.Create(
-                    width,
-                    height,
-                    96, 96,
-                    PixelFormats.Gray16,
-                    null,
-                    scaledPixels,
-                    width * 2
-                );
+            // Viewbox design surface must match native pixels
+            RightSurface.Width = _rightWidth;
+            RightSurface.Height = _rightHeight;
+            RightInkCanvas.Width = _rightWidth;
+            RightInkCanvas.Height = _rightHeight;
 
-                // Update the right pane image
-                RightImage.Source = bitmap;
-
-                // Update the right pane patient info
-                SetPatientInfo(dicomFile.Dataset);
-
-                // Clear any existing strokes in the right InkCanvas
-                RightInkCanvas.Strokes = new StrokeCollection();
-            }
-            catch (Exception ex)
-            {
-                D($"[LOAD RIGHT PANE] EXCEPTION: {ex}");
-                MessageBox.Show($"Error loading DICOM file for right pane: {ex.Message}");
-            }
+            // render with current right WL/WW
+            RenderRightWithCurrentWlWw();
         }
-        
-        //start of methods for two-player mode, need to be able to open the folder so you can view the next image ahead
 
+        //start of methods for two-player mode, need to be able to open the folder so you can view the next image ahead
+        private void RenderLeftWithCurrentWlWw()
+        {
+            if (_raw16 == null) return;
+            var scaled = ApplyWindowLevelTo16Bit(_raw16, _wl, _ww);
+            var bmp = BitmapSource.Create(_width, _height, 96, 96, PixelFormats.Gray16, null, scaled, _width * 2);
+            MainImage.Source = bmp;
+            if (WlWwText != null) WlWwText.Text = $"WL: {_wl}   WW: {_ww}";
+        }
+
+        private void RenderRightWithCurrentWlWw()
+        {
+            if (_rightRaw16 == null) return;
+            var scaled = ApplyWindowLevelTo16Bit(_rightRaw16, _rightwl, _rightww);
+            var bmp = BitmapSource.Create(_rightWidth, _rightHeight, 96, 96, PixelFormats.Gray16, null, scaled, _rightWidth * 2);
+            RightImage.Source = bmp;
+            if (RightWlWwText != null) RightWlWwText.Text = $"WL: {_rightwl}   WW: {_rightww}";
+        }
+
+        // the save as feature works, so how do you load the image, be able to make edits, then have all of edits, stay on the image when
+        // you move to the left, and when you load the next image to the right,
+        // it has to go through the exact same methods the right when it loaded because that has been test and it works, also turn off all available buttons when you do go into 2 player mode,
+        //for when you are loading the new image, you are loading it the same way but it is to the right and it is shrunk, and the left image then is shrunk too and moved to the left side, this is how it should work
+        private void LeftSurface_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            D($"[SELECT] LeftSurface MouseDown btn={e.ChangedButton} handled={e.Handled}");
+            SetActivePane(Pane.Left);
+        }
+
+        private void RightSurface_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            D($"[SELECT] RightSurface MouseDown btn={e.ChangedButton} handled={e.Handled}");
+            SetActivePane(Pane.Right);
+        }
+
+        private void SetActivePane(Pane pane)
+        {
+            D($"[ACTIVE] -> {pane}   LEFT wl/ww={_wl}/{_ww}   RIGHT wl/ww={_rightwl}/{_rightww}");
+            _activePane = pane;
+
+            // visual hint
+            LeftActiveHighlight.Visibility = (pane == Pane.Left) ? Visibility.Visible : Visibility.Collapsed;
+            RightActiveHighlight.Visibility = (pane == Pane.Right) ? Visibility.Visible : Visibility.Collapsed;
+
+            // sliders reflect the active pane's current values (keep them enabled even in 2-player)
+            _suppressSliderEvents = true;
+            if (pane == Pane.Left) { WLSlider.Value = _wl; WWSlider.Value = _ww; }
+            else { WLSlider.Value = _rightwl; WWSlider.Value = _rightww; }
+            _suppressSliderEvents = false;
+
+            // ink input goes only to the active pane
+            ApplyInkEditingModeToActive();
+            D($"[ACTIVE] sliders now WL={WLSlider.Value} WW={WWSlider.Value} suppress={_suppressSliderEvents}");
+        }
+
+        private void ApplyInkEditingModeToActive()
+        {
+            var mode = _drawingEnabled ? InkCanvasEditingMode.Ink : InkCanvasEditingMode.None;
+            InkCanvas.EditingMode = (_activePane == Pane.Left) ? mode : InkCanvasEditingMode.None;
+            RightInkCanvas.EditingMode = (_activePane == Pane.Right) ? mode : InkCanvasEditingMode.None;
+            D($"[INK] L:{InkCanvas.EditingMode}  R:{RightInkCanvas.EditingMode}");
+        }
+
+        // methods for toggling back and forward between images in the folder
+        // visuals
+        private InkCanvas ActiveInk() => _activePane == Pane.Left ? InkCanvas : RightInkCanvas;
+        private System.Windows.Controls.Image ActiveImage() => _activePane == Pane.Left ? MainImage : RightImage;
+        private Grid ActiveOverlay() => _activePane == Pane.Left ? PatientInfoOverlay : RightPatientInfoOverlay;
+
+        // pixels + sizes (assumes you already cache both)
+        private bool ActiveHasRaw() => _activePane == Pane.Left ? _raw16 != null : _rightRaw16 != null;
+        private ushort[] ActiveRaw() => _activePane == Pane.Left ? _raw16 : _rightRaw16;
+        private int ActiveW() => _activePane == Pane.Left ? _width : _rightWidth;
+        private int ActiveH() => _activePane == Pane.Left ? _height : _rightHeight;
+
+        // WL/WW (get/set)
+        private int ActiveWL() => _activePane == Pane.Left ? _wl : _rightwl;
+        private int ActiveWW() => _activePane == Pane.Left ? _ww : _rightww;
+        private void SetActiveWlWw(int wl, int ww)
+        {
+            if (_activePane == Pane.Left) { _wl = wl; _ww = ww; } else { _rightwl = wl; _rightww = ww; }
+        }
+        private void RenderActive()
+        {
+            if (!ActiveHasRaw()) return;
+            var scaled = ApplyWindowLevelTo16Bit(ActiveRaw(), ActiveWL(), ActiveWW());
+            var bmp = BitmapSource.Create(ActiveW(), ActiveH(), 96, 96, PixelFormats.Gray16, null, scaled, ActiveW() * 2);
+            ActiveImage().Source = bmp;
+        }
+        private void ApplyPreset(int wl, int ww)
+        {
+            SetActiveWlWw(wl, ww);
+            RenderActive();
+            _suppressSliderEvents = true;
+            WLSlider.Value = wl; WWSlider.Value = ww;
+            _suppressSliderEvents = false;
+        }
+        private void ResetWlWw_Click(object sender, RoutedEventArgs e)
+        {
+            if (!ActiveHasRaw()) return;
+            ComputeAutoWindowLevel(ActiveRaw(), out int wlAuto, out int wwAuto);
+            SetActiveWlWw(wlAuto, wwAuto);
+            RenderActive();
+            _suppressSliderEvents = true; WLSlider.Value = wlAuto; WWSlider.Value = wwAuto; _suppressSliderEvents = false;
+        }
+        private void DrawButton_Click(object sender, RoutedEventArgs e)
+        {
+            _drawingEnabled = !_drawingEnabled;
+            D($"[DRAW] toggle -> {(_drawingEnabled ? "ON" : "OFF")}  active={_activePane}");
+            ApplyInkEditingModeToActive();
+        }
+        private void ClearAll_Click(object s, RoutedEventArgs e)
+        {
+            var before = ActiveInk().Strokes.Count;
+            ActiveInk().Strokes.Clear();
+            D($"[CLEAR] active={_activePane} {before}→{ActiveInk().Strokes.Count}");
+        }
+
+        private void HideAnnotations_Click(object s, RoutedEventArgs e)
+        {
+            var ink = ActiveInk();
+            ink.Visibility = ink.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        }
+        private void HidePatientInfo_Click(object s, RoutedEventArgs e)
+        {
+            var ov = ActiveOverlay();
+            ov.Visibility = ov.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        }
+        private void SaveAs_Click(object sender, RoutedEventArgs e)
+        {
+            // pick active inputs
+            var file = (_activePane == Pane.Left) ? _currentDicomFile : _rightDicomFile;
+            var ink = ActiveInk();               // from the router helpers
+            var wl = ActiveWL();                // int
+            var ww = ActiveWW();                // int
+
+            if (file == null)
+            {
+                MessageBox.Show("No DICOM loaded for the active pane.");
+                return;
+            }
+
+            // default directory/name based on the active pane's path
+            string defPath = (_activePane == Pane.Left) ? _currentDicomPath : _rightDicomPath;
+            string defName = string.IsNullOrEmpty(defPath) ? "image" : System.IO.Path.GetFileNameWithoutExtension(defPath) + "_v1";
+
+            var sfd = new SaveFileDialog
+            {
+                Filter = "DICOM files (*.dcm)|*.dcm|All files (*.*)|*.*",
+                FileName = defName + ".dcm",
+                InitialDirectory = string.IsNullOrEmpty(defPath) ? null : System.IO.Path.GetDirectoryName(defPath)
+            };
+
+            if (sfd.ShowDialog() != true) return;
+
+            // your saver takes (DicomFile, double? ww, double? wl, InkCanvas, string)
+            SaveWorkingDicomWithInk(file, (double)ww, (double)wl, ink, sfd.FileName);
+            D($"[SAVE-AS] Active={_activePane}  WL={wl} WW={ww}  -> {sfd.FileName}");
+        }
+
+        // for the right hand image, these features do not work: X: Y; HU: tracking, Patient Info Pop, and Hide Button, Clear All, Save as, Drawing Buttons
 
     }
 }

@@ -20,20 +20,25 @@
             <RowDefinition Height="Auto"/>
             <!-- Bottom bar -->
         </Grid.RowDefinitions>
-        <Grid Grid.Row="0" Background="Black"></Grid>
+
         <!-- Title Row -->
-        <TextBlock Grid.Row="0" Text="CT Viewer App"
-               FontSize="20" FontWeight="Bold"
-               HorizontalAlignment="Center"
-               Margin="10"
-               Background="Gold"/>
-        <Grid Grid.Row="2" Background="Black"></Grid>
-        <TextBlock Grid.Row="2" Text="Github: Michaelo-mobile, LLC"
-                FontSize="20" FontWeight="Bold"
-                HorizontalAlignment="Center"
-                Margin="10"
-                Background="Gold"></TextBlock>
-    
+        <Grid Grid.Row="0" Background="Black">
+            <TextBlock Text="CT Viewer App"
+                       FontSize="20" FontWeight="Bold"
+                       HorizontalAlignment="Center"
+                       Margin="10"
+                       Background="Gold"/>
+        </Grid>
+
+        <!-- Bottom Bar -->
+        <Grid Grid.Row="2" Background="Black">
+            <TextBlock Text="Github: Michaelo-mobile, LLC"
+                       FontSize="20" FontWeight="Bold"
+                       HorizontalAlignment="Center"
+                       Margin="10"
+                       Background="Gold"/>
+        </Grid>
+
         <!-- Main 3-Column Layout -->
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
@@ -45,151 +50,142 @@
                 <!-- Image Modifications -->
             </Grid.ColumnDefinitions>
 
-            <views:FileButtons x:Name="FileButtons" SaveAsClicked ="SaveAsClickedEvent" Grid.Column="0"/>
-            
+            <views:FileButtons x:Name="FileButtons" SaveAsClicked="SaveAsClickedEvent" Grid.Column="0"/>
 
-            <StackPanel Grid.Column="2" Background="#EEE" Margin="5"
-            Orientation="Vertical">
-
+            <StackPanel Grid.Column="2" Background="#EEE" Margin="5" Orientation="Vertical">
                 <!-- Drawing buttons panel -->
                 <views:DrawingButtons x:Name="DrawingCanvas"/>
 
                 <!-- New Hide Patient Info button -->
                 <Button x:Name="HidePatientInfoButton"
-                Content="Hide Patient Info"
-                Margin="5"
-                Click="HidePatientInfoButton_Click"/>
+                        Content="Hide Patient Info"
+                        Margin="5"
+                        Click="HidePatientInfoButton_Click"/>
                 <Button x:Name="RestWW_WL"
-                Content="Reset WW and WL"
-                Margin="5"
-                Click="BtnResetAuto_Click"/>
-                <!--could potentialaly add another reset button exclusively for WW and WL seperately-->
+                        Content="Reset WW and WL"
+                        Margin="5"
+                        Click="BtnResetAuto_Click"/>
+                <!-- could potentially add another reset button exclusively for WW and WL separately -->
                 <TextBlock Text="WW:" Margin="0,10,0,2"/>
                 <Slider x:Name="WWSlider"
-                Margin="5"
-                Minimum="0" Maximum="4096"
-                Value="1000"
-                TickFrequency="100"
-                IsSnapToTickEnabled="True"
-                ValueChanged="WWSlider_ValueChanged" />
+                        Margin="5"
+                        Minimum="0" Maximum="4096"
+                        Value="1000"
+                        TickFrequency="100"
+                        IsSnapToTickEnabled="True"
+                        ValueChanged="WWSlider_ValueChanged"/>
                 <TextBlock Text="WL:" Margin="0,10,0,2"/>
                 <Slider x:Name="WLSlider"
-                Margin="5"
-                Minimum="0" Maximum="4096"
-                Value="1000"
-                TickFrequency="100"
-                IsSnapToTickEnabled="True"
-                ValueChanged="WLSlider_ValueChanged" />
+                        Margin="5"
+                        Minimum="0" Maximum="4096"
+                        Value="1000"
+                        TickFrequency="100"
+                        IsSnapToTickEnabled="True"
+                        ValueChanged="WLSlider_ValueChanged"/>
                 <!-- Presets dropdown -->
                 <ComboBox x:Name="PresetComboBox"
-                Margin="5"
-                Width="200"
-                SelectionChanged="PresetComboBox_SelectionChanged">
-                    <ComboBoxItem Content="Default" Tag="default" IsSelected="True" />
-                    <ComboBoxItem Content="Bone" Tag="bone" />
-                    <ComboBoxItem Content="Soft Tissue" Tag="soft" />
-                    <ComboBoxItem Content="Lung" Tag="lung" />
-                    <ComboBoxItem Content="Brain" Tag="brain" />
+                          Margin="5"
+                          Width="200"
+                          SelectionChanged="PresetComboBox_SelectionChanged">
+                    <ComboBoxItem Content="Default" Tag="default" IsSelected="True"/>
+                    <ComboBoxItem Content="Bone" Tag="bone"/>
+                    <ComboBoxItem Content="Soft Tissue" Tag="soft"/>
+                    <ComboBoxItem Content="Lung" Tag="lung"/>
+                    <ComboBoxItem Content="Brain" Tag="brain"/>
                 </ComboBox>
             </StackPanel>
 
-            <!-- Viewer area with two columns -->
-            <Grid x:Name="ViewerGrid" Grid.Column="1">
+            <!-- Host grid for BOTH panes (inside your outer app layout) -->
+            <Grid x:Name="ImagesLayout" Grid.Column="1" ClipToBounds="True">
+                <!-- Two inner columns: left viewer + right viewer -->
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition x:Name="LeftCol"  Width="*" />
-                    <ColumnDefinition x:Name="RightCol" Width="0" />
-                    <!-- hidden by default -->
+                    <ColumnDefinition x:Name="ViewerLeftCol" Width="*"/>
+                    <ColumnDefinition x:Name="ViewerRightCol" Width="0"/>
+                    <!-- collapsed by default -->
                 </Grid.ColumnDefinitions>
 
-                <!-- ========== LEFT PANE (your existing content, unchanged names) ========== -->
-                <Grid x:Name="LeftPane" Grid.Column="0">
-                    <!-- Base image -->
-                    <Image x:Name="MainImage"
-           Stretch="Uniform"
-           HorizontalAlignment="Center"
-           VerticalAlignment="Center"/>
-                    <InkCanvas x:Name="InkCanvas"
-               Background="Transparent"
-               EditingMode="None"
-               Visibility="Visible"
-               Panel.ZIndex="900" />
-                    <!-- Overlay layer (on top of the image) -->
-                    <Grid x:Name="PatientInfoOverlay"
-          Panel.ZIndex="1000"
-          IsHitTestVisible="False">
-                        <!-- Top-right patient info -->
-                        <Border CornerRadius="6" Background="#AA000000" Padding="6"
-              HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10">
-                            <TextBlock x:Name="PatientInfoTop" Foreground="White" TextWrapping="Wrap"
-                   Text="Patient: —&#10;ID: —&#10;Clinic: —&#10;Physician: —"/>
-                        </Border>
-                        <!-- Bottom-right patient info -->
-                        <Border CornerRadius="6" Background="#AA000000" Padding="6"
-              HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="10">
-                            <TextBlock x:Name="PatientInfoBottom" Foreground="White" TextWrapping="Wrap"
-                   Text="Date/Time: —&#10;Modality/Study: —&#10;Image Index: —&#10;Body Area/Laterality: —"/>
-                        </Border>
-                        <!-- Top-left: WL/WW + XY/HU -->
-                        <Border x:Name="XYHUOverlay" Background="#AA000000" CornerRadius="6" Padding="4,2"
-              Margin="10" HorizontalAlignment="Left" VerticalAlignment="Top"
-              Visibility="Visible" Panel.ZIndex="1001" IsHitTestVisible="False">
-                            <StackPanel Orientation="Vertical">
-                                <TextBlock x:Name="XYHU" Foreground="White" FontSize="12"
-                     Text="X: —   Y: —    HU: —"/>
-                                <TextBlock x:Name="WlWwText" Foreground="White" FontSize="12"
-                     Text="WL: —   WW: —"/>
-                            </StackPanel>
-                        </Border>
+                <!-- ========== LEFT PANE (scaled as one unit) ========== -->
+                <Viewbox x:Name="LeftViewbox" Grid.Column="0" Stretch="Uniform">
+                    <!-- Fixed-size surface; set Width/Height in code-behind to image pixel size -->
+                    <Grid x:Name="LeftSurface" ClipToBounds="True">
+                        <Image x:Name="MainImage"
+                               Stretch="Fill"
+                               RenderOptions.BitmapScalingMode="HighQuality"
+                               Panel.ZIndex="0"/>
+                        <InkCanvas x:Name="InkCanvas"
+                                   Background="Transparent"
+                                   EditingMode="None"
+                                   Panel.ZIndex="1"/>
+                        <Border x:Name="LeftActiveHighlight"
+                                Panel.ZIndex="99"
+                                BorderBrush="#66FFD54F" BorderThickness="3"
+                                CornerRadius="6" Visibility="Collapsed"
+                                IsHitTestVisible="False"/>  
+                        <Grid x:Name="PatientInfoOverlay"
+                              IsHitTestVisible="False"
+                              Panel.ZIndex="2">
+                            <Border CornerRadius="6" Background="#AA000000" Padding="6"
+                                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10">
+                                <TextBlock x:Name="PatientInfoTop" Foreground="White" TextWrapping="Wrap"
+                                           Text="Patient: —&#10;ID: —&#10;Clinic: —&#10;Physician: —"/>
+                            </Border>
+                            <Border CornerRadius="6" Background="#AA000000" Padding="6"
+                                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="10">
+                                <TextBlock x:Name="PatientInfoBottom" Foreground="White" TextWrapping="Wrap"
+                                           Text="Date/Time: —&#10;Modality/Study: —&#10;Image Index: —&#10;Body Area/Laterality: —"/>
+                            </Border>
+                            <Border x:Name="XYHUOverlay" Background="#AA000000" CornerRadius="6" Padding="4,2"
+                                    Margin="10" HorizontalAlignment="Left" VerticalAlignment="Top" Visibility="Visible">
+                                <StackPanel Orientation="Vertical">
+                                    <TextBlock x:Name="XYHU" Foreground="White" FontSize="12" Text="X: —   Y: —    HU: —"/>
+                                    <TextBlock x:Name="WlWwText" Foreground="White" FontSize="12" Text="WL: —   WW: —"/>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
                     </Grid>
-                </Grid>
+                </Viewbox>
 
-                <!-- ========== RIGHT PANE (copy, but with Right* names) ========== -->
-                <Grid x:Name="RightPane" Grid.Column="1" Visibility="Collapsed">
-                    <Image x:Name="RightImage"
-           Stretch="Uniform"
-           HorizontalAlignment="Center"
-           VerticalAlignment="Center"/>
-                    <InkCanvas x:Name="RightInkCanvas"
-               Background="Transparent"
-               EditingMode="None"
-               Visibility="Visible"
-               Panel.ZIndex="900"/>
-                    <Grid x:Name="RightPatientInfoOverlay"
-          Panel.ZIndex="1000"
-          IsHitTestVisible="False">
-                        <Border CornerRadius="6" Background="#AA000000" Padding="6"
-              HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10">
-                            <TextBlock x:Name="RightPatientInfoTop" Foreground="White" TextWrapping="Wrap"
-                   Text="Patient: —&#10;ID: —&#10;Clinic: —&#10;Physician: —"/>
-                        </Border>
-                        <Border CornerRadius="6" Background="#AA000000" Padding="6"
-              HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="10">
-                            <TextBlock x:Name="RightPatientInfoBottom" Foreground="White" TextWrapping="Wrap"
-                   Text="Date/Time: —&#10;Modality/Study: —&#10;Image Index: —&#10;Body Area/Laterality: —"/>
-                        </Border>
-                        <Border x:Name="RightXYHUOverlay" Background="#AA000000" CornerRadius="6" Padding="4,2"
-              Margin="10" HorizontalAlignment="Left" VerticalAlignment="Top"
-              Visibility="Visible" Panel.ZIndex="1001" IsHitTestVisible="False">
-                            <StackPanel Orientation="Vertical">
-                                <TextBlock x:Name="RightXYHU" Foreground="White" FontSize="12"
-                     Text="X: —   Y: —    HU: —"/>
-                                <TextBlock x:Name="RightWlWwText" Foreground="White" FontSize="12"
-                     Text="WL: —   WW: —"/>
-                            </StackPanel>
-                        </Border>
+                
+                <!-- ========== RIGHT PANE (scaled as one unit) ========== -->
+                <Viewbox x:Name="RightViewbox" Grid.Column="1" Stretch="Uniform" Visibility="Collapsed">
+                    <Grid x:Name="RightSurface" ClipToBounds="True">
+                        <Image x:Name="RightImage"
+                               Stretch="Fill"
+                               RenderOptions.BitmapScalingMode="HighQuality"
+                               Panel.ZIndex="0"/>
+                        <InkCanvas x:Name="RightInkCanvas"
+                                   Background="Transparent"
+                                   EditingMode="None"
+                                   Panel.ZIndex="1"/>
+                        <Border x:Name="RightActiveHighlight"
+                                    Panel.ZIndex="99"
+                                    BorderBrush="#66FFD54F" BorderThickness="3"
+                                    CornerRadius="6" Visibility="Collapsed"
+                                    IsHitTestVisible="False"/>
+                        <Grid x:Name="RightPatientInfoOverlay"
+                              IsHitTestVisible="False"
+                              Panel.ZIndex="2">
+                            <Border CornerRadius="6" Background="#AA000000" Padding="6"
+                                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10">
+                                <TextBlock x:Name="RightPatientInfoTop" Foreground="White" TextWrapping="Wrap"
+                                           Text="Patient: —&#10;ID: —&#10;Clinic: —&#10;Physician: —"/>
+                            </Border>
+                            <Border CornerRadius="6" Background="#AA000000" Padding="6"
+                                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="10">
+                                <TextBlock x:Name="RightPatientInfoBottom" Foreground="White" TextWrapping="Wrap"
+                                           Text="Date/Time: —&#10;Modality/Study: —&#10;Image Index: —&#10;Body Area/Laterality: —"/>
+                            </Border>
+                            <Border x:Name="RightXYHUOverlay" Background="#AA000000" CornerRadius="6" Padding="4,2"
+                                    Margin="10" HorizontalAlignment="Left" VerticalAlignment="Top" Visibility="Visible">
+                                <StackPanel Orientation="Vertical">
+                                    <TextBlock x:Name="RightXYHU" Foreground="White" FontSize="12" Text="X: —   Y: —    HU: —"/>
+                                    <TextBlock x:Name="RightWlWwText" Foreground="White" FontSize="12" Text="WL: —   WW: —"/>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
                     </Grid>
-                </Grid>
-
-                <!-- Optional splitter (auto-hidden when right pane collapsed) -->
-                <GridSplitter Grid.Column="0"
-                HorizontalAlignment="Right"
-                Width="5"
-                Background="#33FFFFFF"
-                Visibility="{Binding ElementName=RightPane, Path=Visibility}"/>
-            </Grid>
-
-      
+                </Viewbox>
             </Grid>
         </Grid>
-     
+    </Grid>
 </Window>

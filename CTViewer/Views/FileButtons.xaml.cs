@@ -1,4 +1,5 @@
-﻿using System;
+﻿#nullable disable
+using System;
 using System.Collections.Generic;
 using System.Linq;
 #nullable disable
@@ -21,54 +22,45 @@ namespace CTViewer.Views
     /// </summary>
     public partial class FileButtons : UserControl
     {
-        public event EventHandler<bool> TwoPlayerModeChanged;
-        public FileButtons()
-        {
-            InitializeComponent();
-        }
+        public event EventHandler<string>? FileOpened;
+        public event EventHandler<bool>? TwoPlayerModeChanged;
+
+        public FileButtons() => InitializeComponent();
+
         private void OpenButton_Click(object sender, RoutedEventArgs e)
         {
-            var dialog = new Microsoft.Win32.OpenFileDialog();
-            dialog.Filter = "DICOM files (*.dcm)|*.dcm|All files (*.*)|*.*";
-            if (dialog.ShowDialog() == true)
+            var dlg = new Microsoft.Win32.OpenFileDialog
             {
-                FileOpened?.Invoke(this, dialog.FileName);
-
-            }
-
+                Filter = "DICOM files (*.dcm)|*.dcm|All files (*.*)|*.*"
+            };
+            if (dlg.ShowDialog() == true)
+                FileOpened?.Invoke(this, dlg.FileName);
         }
-        public event EventHandler<string> FileOpened;
 
         private void ExitButton_Click(object sender, RoutedEventArgs e)
-        {
-            Application.Current.Shutdown();
-        }
+            => Application.Current.Shutdown();
+
+        // Routed event so MainWindow can hook it from XAML
         public static readonly RoutedEvent SaveAsClickedEvent =
-        EventManager.RegisterRoutedEvent(
-            "SaveAsClicked", RoutingStrategy.Bubble,
-            typeof(RoutedEventHandler), typeof(FileButtons));
+            EventManager.RegisterRoutedEvent(
+                "SaveAsClicked", RoutingStrategy.Bubble,
+                typeof(RoutedEventHandler), typeof(FileButtons));
 
         public event RoutedEventHandler SaveAsClicked
         {
-            add { AddHandler(SaveAsClickedEvent, value); }
-            remove { RemoveHandler(SaveAsClickedEvent, value); }
+            add => AddHandler(SaveAsClickedEvent, value);
+            remove => RemoveHandler(SaveAsClickedEvent, value);
         }
 
-        // wire this to your Save As button in FileButtons.xaml: Click="SaveAsBtn_Click"
         private void SaveAs_Click(object sender, RoutedEventArgs e)
-        {      RaiseEvent(new RoutedEventArgs(SaveAsClickedEvent));
-    }
+            => RaiseEvent(new RoutedEventArgs(SaveAsClickedEvent, this)); // set Source=this
+
         private void TwoPlayerMode_Checked(object sender, RoutedEventArgs e)
-        {
-            // Handle the Two Player Mode checkbox checked event
-            // You can add your logic here
-            TwoPlayerModeChanged?.Invoke(this, true);
-        }
+            => TwoPlayerModeChanged?.Invoke(this, true);
+
         private void TwoPlayerMode_Unchecked(object sender, RoutedEventArgs e)
-        {
-            // Handle the Two Player Mode checkbox unchecked event
-            // You can add your logic here
-            TwoPlayerModeChanged?.Invoke(this, false);
-        }
+            => TwoPlayerModeChanged?.Invoke(this, false);
     }
+
 }
+
