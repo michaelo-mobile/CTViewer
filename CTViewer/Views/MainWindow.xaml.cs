@@ -22,6 +22,8 @@ using System.Text.RegularExpressions;
 using System.Diagnostics;
 using System.Runtime.Intrinsics.X86;
 using System.Security.Principal;
+using System.Security.Cryptography;
+using System.Linq;
 
 namespace CTViewer.Views
 {
@@ -60,8 +62,10 @@ namespace CTViewer.Views
         private bool _drawingEnabled = false;   // your Draw button toggles this
 
         // ===== Current stroke style (shared UI, applied to active pane) =====
-        private double _strokeWidth = 2.0;
-        private System.Drawing.Color _strokeColor = System.Drawing.Color.Lime;
+        // Drawing defaults + UI guard
+        private const double DEFAULT_STROKE_WIDTH = 2.0;
+        private static readonly System.Windows.Media.Color DEFAULT_STROKE_COLOR = System.Windows.Media.Colors.Black;
+        private bool _suppressDrawingUi = false;   // prevents feedback loops when we set the toolbar programmatically
 
         [Conditional("DEBUG")]
         static void D(string msg) => System.Diagnostics.Debug.WriteLine(msg);
@@ -153,6 +157,15 @@ namespace CTViewer.Views
             public Grid Surface;
             public TextBlock WlWwLabel;
             public TextBlock XYHUD;
+
+            public bool DrawEnabled = false;                 // draw toggle
+            public bool InkVisible = true;                   // hide/show annotations
+            public double StrokeWidth = DEFAULT_STROKE_WIDTH;                 // default Stroke Width
+            public System.Windows.Media.Color StrokeColor = DEFAULT_STROKE_COLOR;
+
+            // === Dirty-tracking baseline ===
+            public int WL0, WW0;       // WL/WW when last loaded/saved
+            public string InkHash0;    // strokes checksum when last loaded/saved
         }
         private void HookMouse(string tag, UIElement el)
         {
@@ -172,6 +185,9 @@ namespace CTViewer.Views
         private void OnTwoPlayerModeChanged(object sender, bool on)
         {
             D($"[2P] toggle -> {on}");
+
+            // Confirm if there are unsaved edits before switching modes
+            
             SetUiEnabled(false);                  // 1) freeze UI during the switch
 
             // Show/hide right column; ViewBox does the shrinking
@@ -195,7 +211,7 @@ namespace CTViewer.Views
                 // collapse to single pane
                 RightImage.Source = null;
                 RightInkCanvas.Strokes.Clear();
-
+                RightImageFile.Text = "—";
                 _activePane = Pane.Left; // so sliders are allowed to move
                 InitializeWlWwUI(_left, _left.WL, _left.WW, alsoMoveSharedSliders: true);
                 RenderPaneBitmap(_left); // draw using preserved WL/WW
@@ -203,6 +219,8 @@ namespace CTViewer.Views
 
             SetUiEnabled(true);                   // 5) thaw UI
             ApplyInkEditingModeToActive();   // <- re-apply edit mode after layout/loads
+            UpdateActiveHighlight();
+            
         }
 
 
@@ -254,7 +272,7 @@ namespace CTViewer.Views
 
                 // patient info (use pane-aware setter if you split left/right)
                 SetPatientInfo(ds, pane);
-
+                ResetDrawingForPane(P, syncToolbar: _activePane == pane);
                 // If this pane is the active pane, sync the shared sliders/labels
                 if (_activePane == pane)
                     InitializeWlWwUI(P, P.WL, P.WW, alsoMoveSharedSliders: true);
@@ -266,6 +284,11 @@ namespace CTViewer.Views
                 D($"[OPEN:{pane}] EXCEPTION: {ex}");
                 MessageBox.Show($"Error loading DICOM file: {ex.Message}");
             }
+            D($"[OPEN:{pane}] done wl/ww={P.WL}/{P.WW} edited={CheckIfEdited}");
+            DumpBoth($"AfterLoad({pane})");
+            if (_activePane == pane) UpdateActiveHighlight();   // <—
+            P.Path = filepath;
+            UpdateFileLabelForPane(pane, filepath);     // <—                               
         }
         private void RenderPaneBitmap(PaneState P)
         {
@@ -295,8 +318,8 @@ namespace CTViewer.Views
             _currentDicomFile = _left.File;
             _currentDicomPath = _left.Path;
 
-            _drawingEnabled = true;
-            SetDrawMode(true);                 // or just remove the call entirely
+            _drawingEnabled = false;
+            SetDrawMode(false);                 // or just remove the call entirely
             ApplyInkEditingModeToActive();     // keep active pane in the right mode
         }
 
@@ -537,6 +560,7 @@ namespace CTViewer.Views
         {
             _patientInfoVisible = !_patientInfoVisible;
             SetPatientInfoVisibility(_patientInfoVisible);
+            HidePatientInfoButton.Content = _patientInfoVisible ? "🔒  Hide Patient Info" : "🔓  Show Patient Info";
         }
 
         private void SetPatientInfoVisibility(bool visible)
@@ -703,16 +727,56 @@ namespace CTViewer.Views
         {
             _activePane = pane;
 
+            // Load pane’s draw toggle into your global + apply
+            _drawingEnabled = Active().DrawEnabled;
+            ApplyInkEditingModeToActive();
+
+            // Sync shared UI controls to this pane
+            SyncUIFromActivePane();
+
+            // WL/WW sliders already handled by your code
             _suppressSliderEvents = true;
             WLSlider.Value = Active().WL;
             WWSlider.Value = Active().WW;
             _suppressSliderEvents = false;
 
             UpdateWlWwLabel(Active());
-            ApplyInkEditingModeToActive();  // <- make the new pane draw/select
-            LeftActiveHighlight.Visibility = (pane == Pane.Left) ? Visibility.Visible : Visibility.Collapsed;
-            RightActiveHighlight.Visibility = (pane == Pane.Right) ? Visibility.Visible : Visibility.Collapsed;
+            UpdateActiveHighlight(); // update the active highlight border
+            //D($"[STATE:SetActivePane] " + DumpPaneStates());
         }
+        private void UpdateActiveHighlight()
+        {
+            LeftActiveHighlight.Visibility = (_activePane == Pane.Left) ? Visibility.Visible : Visibility.Collapsed;
+            RightActiveHighlight.Visibility = (_activePane == Pane.Right) ? Visibility.Visible : Visibility.Collapsed;
+
+            // make it pop a bit
+            LeftActiveHighlight.BorderThickness = (_activePane == Pane.Left) ? new Thickness(5) : new Thickness(0);
+            RightActiveHighlight.BorderThickness = (_activePane == Pane.Right) ? new Thickness(5) : new Thickness(0);
+        }
+        private void SyncUIFromActivePane()
+        {
+            var p = Active();
+
+            // drawing toggle button text/state
+            DrawingCanvas.DrawingToggleButton.Content = p.DrawEnabled;
+            DrawingCanvas.DrawingToggleButton.Content = p.DrawEnabled ? "⛔ Stop Drawing" : "✏️ Draw";
+
+            // stroke size slider
+            DrawingCanvas.StrokeSizeSlider.Value = Math.Max(1, p.StrokeWidth);
+
+            // stroke color combo selection (match by color name you use)
+            // adjust to your actual items if needed
+            var hex = ColorToHex(p.StrokeColor);
+            if (hex == "#FF0000") DrawingCanvas.StrokeColorComboBox.SelectedIndex = 1; // Red
+            else if (hex == "#0000FF") DrawingCanvas.StrokeColorComboBox.SelectedIndex = 2; // Blue
+            else if (hex == "#008000" || hex == "#00FF00") DrawingCanvas.StrokeColorComboBox.SelectedIndex = 3; // Green
+            else if (hex == "#FFFF00") DrawingCanvas.StrokeColorComboBox.SelectedIndex = 4; // Yellow
+            else DrawingCanvas.StrokeColorComboBox.SelectedIndex = 0; // Black
+
+            // hide/show annotations button
+            DrawingCanvas.HideButton.Content = p.InkVisible ? "🙈  Hide Annotations" : "👁️  Show Annotations";
+        }
+
 
         private readonly Dictionary<string, (int wl, int ww)> _presets = new()
         {
@@ -787,21 +851,28 @@ namespace CTViewer.Views
         }
         private void OnStrokeSizeChanged(double size)
         {
-            var ink = Active().Ink;                      // ← active canvas
-            var da = ink.DefaultDrawingAttributes.Clone();
-            da.Width = Math.Max(1, size);
-            da.Height = Math.Max(1, size);
-            ink.DefaultDrawingAttributes = da;
+            if (_suppressDrawingUi) return;
+            var p = Active();
+            p.StrokeWidth = Math.Max(1, size);
+            ApplyInkStyle(p);
+            DumpBoth($"StrokeSizeChanged({size:0.##})");
         }
 
-
+        private void ApplyInkStyle(PaneState p)
+        {
+            var da = p.Ink.DefaultDrawingAttributes.Clone();
+            da.Width = da.Height = Math.Max(1, p.StrokeWidth);
+            da.Color = p.StrokeColor;
+            p.Ink.DefaultDrawingAttributes = da;
+        }
         private void OnStrokeColorChanged(System.Windows.Media.Brush brush)
         {
+            if (_suppressDrawingUi) return;
             if (brush is not SolidColorBrush scb) return;
-            var ink = Active().Ink;                      // ← active canvas
-            var da = ink.DefaultDrawingAttributes.Clone();
-            da.Color = scb.Color;
-            ink.DefaultDrawingAttributes = da;
+            var p = Active();
+            p.StrokeColor = scb.Color;
+            ApplyInkStyle(p);
+            DumpBoth($"StrokeColorChanged({ColorToHex(scb.Color)})");
         }
 
 
@@ -841,19 +912,33 @@ namespace CTViewer.Views
 
         private void OnHideClicked()
         {
-            var ink = Active().Ink;
-            var to = (ink.Visibility == Visibility.Visible) ? Visibility.Collapsed
-                                                             : Visibility.Visible;
-            ink.Visibility = to;
-            ink.IsHitTestVisible = (to == Visibility.Visible) && _drawingEnabled;
+            var p = Active();
+            var to = (p.Ink.Visibility == Visibility.Visible) ? Visibility.Collapsed : Visibility.Visible;
+
+            p.Ink.Visibility = to;
+            p.Ink.IsHitTestVisible = (to == Visibility.Visible) && p.DrawEnabled; // pane-specific
+            p.InkVisible = (to == Visibility.Visible);
+
+            // If this lives inside a toolbar/usercontrol, point at the right button name
+            DrawingCanvas.HideButton.Content = p.InkVisible ? "🙈  Hide Annotations" : "👁️  Show Annotations";
+
+            Mouse.OverrideCursor = p.InkVisible && p.DrawEnabled ? Cursors.Pen : Cursors.Arrow;
+
+           // D($"[STATE:HideClicked] " + DumpPaneStates());
         }
+
 
 
         private void OnDrawModeToggled(bool enabled)
         {
+            if (_suppressDrawingUi) return;
             _drawingEnabled = enabled;
-            ApplyInkEditingModeToActive();   // sets EditingMode/HitTest/Cursor per pane
+            var p = Active();
+            p.DrawEnabled = enabled;
+            ApplyInkEditingModeToActive();
+            DumpBoth($"DrawModeToggled({enabled})");
         }
+
 
         private void SaveAs_Clicked(object sender, RoutedEventArgs e)
         {
@@ -914,8 +999,41 @@ namespace CTViewer.Views
             }
 
             new DicomFile(ds).Save(outPath);
+            // Decide which pane we just saved based on the InkCanvas instance
+            PaneState p = (inkCanvas == RightInkCanvas) ? _right : _left;
+
+           
         }
 
+        private void ResetDrawingForPane(PaneState p, bool syncToolbar)
+        {
+            // model
+            p.DrawEnabled = false;
+            p.StrokeWidth = DEFAULT_STROKE_WIDTH;
+            p.StrokeColor = DEFAULT_STROKE_COLOR;
+
+            // apply to InkCanvas
+            var da = p.Ink.DefaultDrawingAttributes.Clone();
+            da.Width = da.Height = p.StrokeWidth;
+            da.Color = p.StrokeColor;
+            p.Ink.DefaultDrawingAttributes = da;
+            p.Ink.EditingMode = InkCanvasEditingMode.None;
+            p.Ink.IsHitTestVisible = false;
+
+            // cursor for the active pane
+            if (Active() == p) Mouse.OverrideCursor = Cursors.Arrow;
+
+            // reflect on the toolbar (if your DrawingButtons exposes these parts)
+            if (syncToolbar)
+            {
+                _suppressDrawingUi = true;
+                DrawingCanvas.DrawingToggleButton.Content = false;
+                DrawingCanvas.DrawingToggleButton.Content = "✏️  Draw";
+                DrawingCanvas.StrokeSizeSlider.Value = DEFAULT_STROKE_WIDTH;
+                DrawingCanvas.StrokeColorComboBox.SelectedIndex = 0;   // Black
+                _suppressDrawingUi = false;
+            }
+        }
 
 
         public void LoadInkAndWwWlFromDicom(
@@ -1130,8 +1248,9 @@ namespace CTViewer.Views
             // (optional) cursor feedback
             Mouse.OverrideCursor = _drawingEnabled ? Cursors.Pen : Cursors.Arrow;
 
-            D($"[INK] L:{InkCanvas.EditingMode}  R:{RightInkCanvas.EditingMode}  " +
-              $"HTV(L/R)={InkCanvas.IsHitTestVisible}/{RightInkCanvas.IsHitTestVisible}");
+           
+            D($"[INK] L:{InkCanvas.EditingMode}  R:{RightInkCanvas.EditingMode}");
+            DumpBoth("ApplyInkEditingModeToActive");
         }
 
 
@@ -1179,7 +1298,52 @@ namespace CTViewer.Views
             RightInkCanvas.EditingMode = (_activePane == Pane.Right) ? InkCanvasEditingMode.Select : InkCanvasEditingMode.None;
         }
 
+        private void UpdateFileLabelForPane(Pane pane, string path)
+        {
+            string name = System.IO.Path.GetFileName(path) ?? "—";
+            if (pane == Pane.Left)
+                LeftImageFile.Text = name;
+            else
+                RightImageFile.Text = name;
+        }
+        private static string ComputeInkHash(StrokeCollection strokes)
+        {
+            if (strokes == null || strokes.Count == 0) return "empty";
+            using var ms = new MemoryStream();
+            strokes.Save(ms);
+            var bytes = ms.ToArray();
+            using var sha1 = SHA1.Create();
+            return BitConverter.ToString(sha1.ComputeHash(bytes));
+        }
 
+        
+ 
+
+    private static string ColorToHex(System.Windows.Media.Color c)
+            => $"#{c.R:X2}{c.G:X2}{c.B:X2}";
+
+        #region DEBUG DUMPS
+        [Conditional("DEBUG")]
+        private void DumpInk(string label, Pane pane)
+        {
+            var P = (pane == Pane.Left) ? _left : _right;
+            var active = (_activePane == pane);
+            var da = P?.Ink?.DefaultDrawingAttributes;
+
+            D($"[STATE:{label}] pane={pane} active={active} " +
+              $"drawToggle={_drawingEnabled} " +
+              $"inkVisible={P?.Ink?.Visibility} mode={P?.Ink?.EditingMode} " +
+              $"DA(w={da?.Width:0.##},h={da?.Height:0.##},color={(da == null ? "<n/a>" : ColorToHex(da.Color))}) " +
+              $"WL/WW={P?.WL}/{P?.WW} strokes={(P?.Ink?.Strokes?.Count ?? 0)}");
+        }
+
+        [Conditional("DEBUG")]
+        private void DumpBoth(string label)
+        {
+            DumpInk(label, Pane.Left);
+            DumpInk(label, Pane.Right);
+        }
+        #endregion
 
 
         // default directory/name based on the active pane's path

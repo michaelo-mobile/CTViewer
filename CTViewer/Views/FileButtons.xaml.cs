@@ -56,10 +56,16 @@ namespace CTViewer.Views
             => RaiseEvent(new RoutedEventArgs(SaveAsClickedEvent, this)); // set Source=this
 
         private void TwoPlayerMode_Checked(object sender, RoutedEventArgs e)
-            => TwoPlayerModeChanged?.Invoke(this, true);
+        {
+            TwoPlayerMode.Content = "🖼️  Single Pane";
+            TwoPlayerModeChanged?.Invoke(this, true);
+        }
 
         private void TwoPlayerMode_Unchecked(object sender, RoutedEventArgs e)
-            => TwoPlayerModeChanged?.Invoke(this, false);
+        {
+            TwoPlayerMode.Content = "🖼️🖼️  Side by Side"; 
+            TwoPlayerModeChanged?.Invoke(this, false);
+        }
     }
 
 }

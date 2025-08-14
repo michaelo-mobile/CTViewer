@@ -61,7 +61,16 @@ namespace CTViewer.Views
 
             UndoButton.Click += (s, e) => UndoClicked?.Invoke();
             ClearButton.Click += (s, e) => ClearClicked?.Invoke();
-            HideButton.Click += (s, e) => HideClicked?.Invoke();
+            // set initial text in XAML to match this, e.g. "🙈  Hide Annotations"
+            HideButton.Click += (s, e) =>
+            {
+                // toggle the caption based on what it currently says
+                bool showing = HideButton.Content?.ToString()?.Contains("Hide") == true;
+                HideButton.Content = showing ? "👁️  Show Annotations" : "🙈  Hide Annotations";
+
+                // let MainWindow do the actual hide/show work
+                HideClicked?.Invoke();
+            };
         }
     }
 }

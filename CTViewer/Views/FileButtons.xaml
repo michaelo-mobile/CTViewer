@@ -9,11 +9,11 @@
     <Grid>
         <StackPanel Grid.Column="0" Background="#EEE" Margin="5">
             <!-- Add your buttons here -->
-            <Button Content="Exit" Margin="5" Click="ExitButton_Click"/>
-            <Button Content="Open" Margin="5" Click="OpenButton_Click"/>
-            <Button Content="Save As" Margin="5" Click="SaveAs_Click" x:Name="SaveAsButton"/>
-            <Button Content="Export" Margin="5"/>
-            <ToggleButton x:Name="TwoPlayerMode" Content="Side by Side Mode" Checked="TwoPlayerMode_Checked" Unchecked="TwoPlayerMode_Unchecked" Margin="5"/>
+            <Button Content="🚪 Exit" Margin="5" Click="ExitButton_Click"/>
+            <Button Content="📂 Open" Margin="5" Click="OpenButton_Click"/>
+            <Button Content="💾 Save As" Margin="5" Click="SaveAs_Click" x:Name="SaveAsButton"/>
+            <Button Content="📤 Export" Margin="5"/>
+            <ToggleButton x:Name="TwoPlayerMode" Content="🖼️🖼️ Side by Side Mode" Checked="TwoPlayerMode_Checked" Unchecked="TwoPlayerMode_Unchecked" Margin="5"/>
         </StackPanel>
     </Grid>
 </UserControl>
