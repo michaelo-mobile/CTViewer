@@ -12,8 +12,9 @@
             <Button Content="🚪 Exit" Margin="5" Click="ExitButton_Click"/>
             <Button Content="📂 Open" Margin="5" Click="OpenButton_Click"/>
             <Button Content="💾 Save As" Margin="5" Click="SaveAs_Click" x:Name="SaveAsButton"/>
-            <Button Content="📤 Export" Margin="5"/>
+            <!--<Button Content="📤 Export" Margin="5"/> I have not implemented this yet-->
             <ToggleButton x:Name="TwoPlayerMode" Content="🖼️🖼️ Side by Side Mode" Checked="TwoPlayerMode_Checked" Unchecked="TwoPlayerMode_Unchecked" Margin="5"/>
+            <TextBlock Text="⚠️ Edits are not auto-saved. Before switching from Side-by-Side to Single Pane, use “Save As” to keep changes to the right image." Margin="5,10,0,2" TextWrapping="Wrap"/>
         </StackPanel>
     </Grid>
 </UserControl>

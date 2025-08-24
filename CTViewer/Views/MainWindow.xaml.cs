@@ -78,7 +78,7 @@ namespace CTViewer.Views
         public MainWindow()
         {
             InitializeComponent();
-
+            
             _left = new PaneState
             {
                 Image = MainImage,
@@ -140,7 +140,8 @@ namespace CTViewer.Views
             // Start with LEFT active; make both canvases use current stroke style
             SetActivePane(Pane.Left);
             //OnStrokeSizeChanged(InkCanvas);
-           // OnStrokeSizeChanged(RightInkCanvas);
+            // OnStrokeSizeChanged(RightInkCanvas);
+            StartupBlankUI();
         }
 
         private sealed class PaneState
@@ -182,12 +183,36 @@ namespace CTViewer.Views
               $"posL=({pL.X:0},{pL.Y:0}) posR=({pR.X:0},{pR.Y:0}) sender={sender.GetType().Name}");
         }
         // method for the two player mode toggle
+
+        private void StartupBlankUI()
+        {
+            // Hide all overlays
+            PatientInfoOverlay.Visibility = Visibility.Collapsed;
+            RightPatientInfoOverlay.Visibility = Visibility.Collapsed;
+            WlWwText.Visibility = Visibility.Collapsed;
+            RightWlWwText.Visibility = Visibility.Collapsed;
+            XYHU.Visibility = Visibility.Collapsed;
+            RightXYHU.Visibility = Visibility.Collapsed;
+
+            // Hide active highlights
+            LeftActiveHighlight.Visibility = Visibility.Collapsed;
+            RightActiveHighlight.Visibility = Visibility.Collapsed;
+
+            // Clear images & ink; make surfaces white
+            MainImage.Source = null;
+            RightImage.Source = null;
+            InkCanvas.Strokes.Clear();
+            RightInkCanvas.Strokes.Clear();
+            LeftSurface.Background = System.Windows.Media.Brushes.White;
+            RightSurface.Background = System.Windows.Media.Brushes.White;
+        }
+
         private void OnTwoPlayerModeChanged(object sender, bool on)
         {
             D($"[2P] toggle -> {on}");
 
             // Confirm if there are unsaved edits before switching modes
-            
+
             SetUiEnabled(false);                  // 1) freeze UI during the switch
 
             // Show/hide right column; ViewBox does the shrinking
@@ -220,7 +245,7 @@ namespace CTViewer.Views
             SetUiEnabled(true);                   // 5) thaw UI
             ApplyInkEditingModeToActive();   // <- re-apply edit mode after layout/loads
             UpdateActiveHighlight();
-            
+
         }
 
 
@@ -235,9 +260,9 @@ namespace CTViewer.Views
 
                 var dicomFile = DicomFile.Open(filepath);
                 var ds = dicomFile.Dataset;
-                #if DEBUG
+#if DEBUG
                 DumpPrivateGroup0011(ds);
-                #endif
+#endif
 
                 var pixelData = DicomPixelData.Create(ds);
                 int width = pixelData.Width;
@@ -248,13 +273,14 @@ namespace CTViewer.Views
                 Buffer.BlockCopy(frame, 0, P.Raw16, 0, frame.Length);
 
                 ComputeAutoWindowLevel(P.Raw16, out var autoWL, out var autoWW);
+                if (autoWW < 1) autoWW = 1; // guard: never allow 0/neg width
 
                 // try to restore WL/WW + strokes
                 LoadInkAndWwWlFromDicom(ds, P.Ink, out double? savedWW, out double? savedWL);
                 bool edited = savedWL.HasValue && savedWW.HasValue;
 
-                P.WL = (preferSavedWlWw && edited) ? (int)savedWL.Value : autoWL;
-                P.WW = (preferSavedWlWw && edited) ? (int)savedWW.Value : autoWW;
+                P.WL = (preferSavedWlWw && edited) ? (int)Math.Round(savedWL.Value) : autoWL;
+                P.WW = (preferSavedWlWw && edited) ? (int)Math.Round(savedWW.Value) : autoWW;
 
                 P.Width = width;
                 P.Height = height;
@@ -269,27 +295,42 @@ namespace CTViewer.Views
 
                 // render bitmap for this pane
                 RenderPaneBitmap(P);
-
+                if (pane == Pane.Left)
+                {
+                    WlWwText.Visibility = Visibility.Visible;
+                    XYHU.Visibility = Visibility.Visible;
+                    PatientInfoOverlay.Visibility = _patientInfoVisible ? Visibility.Visible : Visibility.Collapsed;
+                }
+                else
+                {
+                    RightWlWwText.Visibility = Visibility.Visible;
+                    RightXYHU.Visibility = Visibility.Visible;
+                    RightPatientInfoOverlay.Visibility = _patientInfoVisible ? Visibility.Visible : Visibility.Collapsed;
+                }
                 // patient info (use pane-aware setter if you split left/right)
                 SetPatientInfo(ds, pane);
                 ResetDrawingForPane(P, syncToolbar: _activePane == pane);
-                // If this pane is the active pane, sync the shared sliders/labels
+
+                // If this pane is the active pane, sync the shared sliders/labels (UI should NOT write back into P.* here)
                 if (_activePane == pane)
                     InitializeWlWwUI(P, P.WL, P.WW, alsoMoveSharedSliders: true);
-                ApplyInkEditingModeToActive();   // <- keep edit mode consistent
+
+                ApplyInkEditingModeToActive();   // keep edit mode consistent
                 D($"[OPEN:{pane}] done wl/ww={P.WL}/{P.WW} edited={edited}");
             }
             catch (Exception ex)
             {
                 D($"[OPEN:{pane}] EXCEPTION: {ex}");
                 MessageBox.Show($"Error loading DICOM file: {ex.Message}");
+                return; // bail out; don’t run tail work with partial state
             }
-            D($"[OPEN:{pane}] done wl/ww={P.WL}/{P.WW} edited={CheckIfEdited}");
+
+            // Tail work AFTER successful load
             DumpBoth($"AfterLoad({pane})");
-            if (_activePane == pane) UpdateActiveHighlight();   // <—
-            P.Path = filepath;
-            UpdateFileLabelForPane(pane, filepath);     // <—                               
+            if (_activePane == pane) UpdateActiveHighlight();
+            UpdateFileLabelForPane(pane, filepath);
         }
+
         private void RenderPaneBitmap(PaneState P)
         {
             if (P.Raw16 == null) return;
@@ -307,9 +348,9 @@ namespace CTViewer.Views
         /// Event handler triggered when a file is opened from FileButtons.
         /// Loads and displays a 16-bit grayscale DICOM image with auto window/level adjustment.
         /// </summary>
-        
-      
-        
+
+
+
         private void FileButtons_FileOpened(object sender, string filepath)
         {
             _activePane = Pane.Left;
@@ -384,8 +425,8 @@ namespace CTViewer.Views
 
             windowWidth = Math.Max(1, maxVal - minVal);          // avoid divide-by-zero
             windowCenter = (maxVal + minVal) / 2;
-            
-            
+
+
         }
 
         /// <summary>
@@ -700,23 +741,7 @@ namespace CTViewer.Views
             }
         }
 
-        //private void RenderPaneBitmap(PaneState p)
-        //{
-        //    if (p.Raw16 == null || p.Width <= 0 || p.Height <= 0) return;
 
-        //    ushort[] scaled = ApplyWindowLevelTo16Bit(p.Raw16, p.WL, p.WW);
-        //    var bmp = BitmapSource.Create(
-        //        p.Width, p.Height,
-        //        96, 96,
-        //        PixelFormats.Gray16,
-        //        null,
-        //        scaled,
-        //        p.Width * 2);
-
-        //    p.Image.Source = bmp;
-        //    UpdateWlWwLabel(p);
-        //}
-        
         private void UpdateWlWwLabel(PaneState p)
         {
             if (p.WlWwLabel != null)
@@ -804,7 +829,7 @@ namespace CTViewer.Views
             {
                 // per-pane defaults (populate these when you load each image)
                 ComputeAutoWindowLevel(p.Raw16, out var wlAuto, out var wwAuto);
-                
+
                 wl = wlAuto;
                 ww = Math.Max(1, wwAuto);
             }
@@ -893,7 +918,7 @@ namespace CTViewer.Views
                     RightInkCanvas.Strokes.Remove(last);
             }
         }
-        
+
 
         private void OnClearClicked()
         {
@@ -924,7 +949,7 @@ namespace CTViewer.Views
 
             Mouse.OverrideCursor = p.InkVisible && p.DrawEnabled ? Cursors.Pen : Cursors.Arrow;
 
-           // D($"[STATE:HideClicked] " + DumpPaneStates());
+            // D($"[STATE:HideClicked] " + DumpPaneStates());
         }
 
 
@@ -1002,7 +1027,7 @@ namespace CTViewer.Views
             // Decide which pane we just saved based on the InkCanvas instance
             PaneState p = (inkCanvas == RightInkCanvas) ? _right : _left;
 
-           
+
         }
 
         private void ResetDrawingForPane(PaneState p, bool syncToolbar)
@@ -1040,27 +1065,36 @@ namespace CTViewer.Views
     DicomDataset ds, InkCanvas ink,
     out double? ww, out double? wl)
         {
-            if (ds.TryGetValues(InkTags.WindowWidthTag, out double[] wws) && wws.Length > 0)
-                ww = wws[0];
-            else
-                ww = null;
+            // Read raw arrays; pick first numeric if present
+            ww = null;
+            wl = null;
 
-            if (ds.TryGetValues(InkTags.WindowCenterTag, out double[] wls) && wls.Length > 0)
-                wl = wls[0];
-            else
-                wl = null;
+            // ✅ Read from the STANDARD DICOM tags you actually save to
+            if (ds.TryGetValues(DicomTag.WindowWidth, out double[] wws) && wws.Length > 0)
+            {
+                var v = wws[0];
+                if (!double.IsNaN(v) && !double.IsInfinity(v) && v > 0.5) // WW must be positive and meaningful
+                    ww = Math.Round(v, 0);
+            }
 
-            D($"[LOAD] WW={ww?.ToString() ?? "<null>"}  WL={wl?.ToString() ?? "<null>"}");
+            if (ds.TryGetValues(DicomTag.WindowCenter, out double[] wls) && wls.Length > 0)
+            {
+                var v = wls[0];
+                if (!double.IsNaN(v) && !double.IsInfinity(v)) // WL can be negative; allow it
+                    wl = Math.Round(v, 0);
+            }
 
+            D($"[LOAD] WW={(ww?.ToString() ?? "<null>")}  WL={(wl?.ToString() ?? "<null>")}");
+
+            // --- ink reload unchanged ---
             ink.Strokes = new StrokeCollection();
-
             ds.TryGetSingleValue<string>(InkTags.CreatorTag, out var creator);
             ds.TryGetValues<byte>(InkTags.StrokesTag, out var bytes);
             D($"[LOAD] Creator='{creator ?? "<null>"}'  bytes={(bytes?.Length ?? 0)}");
 
             if (!string.IsNullOrEmpty(creator) &&
                 string.Equals(creator, InkTags.CreatorValue, StringComparison.OrdinalIgnoreCase) &&
-                bytes?.Length > 0)
+                (bytes?.Length ?? 0) > 0)
             {
                 using var ms = new MemoryStream(bytes, writable: false);
                 ink.Strokes = new StrokeCollection(ms);
@@ -1071,6 +1105,8 @@ namespace CTViewer.Views
                 D("[LOAD] No ink strokes loaded.");
             }
         }
+
+
 
 
 
@@ -1091,9 +1127,11 @@ namespace CTViewer.Views
 
         private void SaveAsClickedEvent(object sender, RoutedEventArgs e)
         {
-            // Active pane info
-            var file = (_activePane == Pane.Left) ? _currentDicomFile : _rightDicomFile;
-            var basePath = (_activePane == Pane.Left) ? _currentDicomPath : _rightDicomPath;
+            // Use the active pane state as the single source of truth
+            var P = (_activePane == Pane.Left) ? _left : _right;
+
+            var file = P.File;
+            var basePath = P.Path;
 
             if (file == null)
             {
@@ -1101,7 +1139,6 @@ namespace CTViewer.Views
                 return;
             }
 
-            // If basePath is unknown, fall back to Documents
             var suggested = !string.IsNullOrWhiteSpace(basePath)
                 ? MakeNextVersionName(basePath)
                 : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "image_v1.dcm");
@@ -1117,24 +1154,27 @@ namespace CTViewer.Views
             {
                 try
                 {
-                    // Pull WL/WW + Ink from the active pane
-                    double? ww = (_activePane == Pane.Left) ? _ww : _rightww;
-                    double? wl = (_activePane == Pane.Left) ? _wl : _rightwl;
-                    var ink = (_activePane == Pane.Left) ? InkCanvas : RightInkCanvas;
+                    // ✅ Pull WL/WW + Ink from the pane state (NOT the globals)
+                    double? ww = P.WW;     // order must be (ww, wl)
+                    double? wl = P.WL;
+                    var ink = P.Ink;
 
                     SaveWorkingDicomWithInk(file, ww, wl, ink, dlg.FileName);
                     D($"[SAVE-AS] pane={_activePane} WL={wl} WW={ww} -> {dlg.FileName}");
 
-                    // Optional: make the new file/path the pane’s current “opened” file
+                    // Keep the pane in sync with the new file/path
+                    P.Path = dlg.FileName;
+                    P.File = DicomFile.Open(dlg.FileName);
+
                     if (_activePane == Pane.Left)
                     {
-                        _currentDicomPath = dlg.FileName;
-                        _currentDicomFile = DicomFile.Open(dlg.FileName); // keep dataset in sync if you rely on it later
+                        _currentDicomPath = P.Path;
+                        _currentDicomFile = P.File;
                     }
                     else
                     {
-                        _rightDicomPath = dlg.FileName;
-                        _rightDicomFile = DicomFile.Open(dlg.FileName);
+                        _rightDicomPath = P.Path;
+                        _rightDicomFile = P.File;
                     }
                 }
                 catch (Exception ex)
@@ -1144,6 +1184,7 @@ namespace CTViewer.Views
                 }
             }
         }
+
 
 
 
@@ -1248,7 +1289,7 @@ namespace CTViewer.Views
             // (optional) cursor feedback
             Mouse.OverrideCursor = _drawingEnabled ? Cursors.Pen : Cursors.Arrow;
 
-           
+
             D($"[INK] L:{InkCanvas.EditingMode}  R:{RightInkCanvas.EditingMode}");
             DumpBoth("ApplyInkEditingModeToActive");
         }
@@ -1316,11 +1357,11 @@ namespace CTViewer.Views
             return BitConverter.ToString(sha1.ComputeHash(bytes));
         }
 
-        
- 
 
-    private static string ColorToHex(System.Windows.Media.Color c)
-            => $"#{c.R:X2}{c.G:X2}{c.B:X2}";
+
+
+        private static string ColorToHex(System.Windows.Media.Color c)
+                => $"#{c.R:X2}{c.G:X2}{c.B:X2}";
 
         #region DEBUG DUMPS
         [Conditional("DEBUG")]
@@ -1347,10 +1388,6 @@ namespace CTViewer.Views
 
 
         // default directory/name based on the active pane's path
-
-
-
-        // for the right hand image, these features do not work: X: Y; HU: tracking, Patient Info Pop, and Hide Button, Clear All, Save as, Drawing Buttons
 
     }
 }
